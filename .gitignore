@@ -1,0 +1,10 @@
+__pycache__
+venv
+pygui
+logs
+cache
+
+imgui.ini
+query_cache.json
+
+*api_key*
