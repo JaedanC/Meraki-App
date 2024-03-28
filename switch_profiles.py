@@ -13,18 +13,18 @@ _default_8 = [
 ]
 _default_24 = [
     12*[p.RJ45],
-    12*[p.RJ45] + [p.Gap] + 4*[p.SFP] + 2*[p.STACK],
+    12*[p.RJ45] + [p.Gap] + 4*[p.SFP] + [p.Gap] + 2*[p.STACK],
 ]
 _default_48 = [
     24*[p.RJ45],
-    24*[p.RJ45] + [p.Gap] + 4*[p.SFP] + 2*[p.STACK],
-],
+    24*[p.RJ45] + [p.Gap] + 4*[p.SFP] + [p.Gap] + 2*[p.STACK],
+]
 
 profiles = {
+    # "C9200L-24P-4Xe": _default_24, # Testing that this works
     "default_8": _default_8,
     "default_24": _default_24,
     "default_48": _default_48,
-    "C9200L-24P-4Xe": _default_24,
     "MS120-8FP": _default_8,
     "MS120-48FP": [
         24*[p.RJ45] + [p.Gap] + 2*[p.SFP],
@@ -45,19 +45,19 @@ profiles = {
     "MS210-24P":  _default_24,
     "MS210-48FP": _default_48,
     "MS220-8P": [
-        8*[p.RJ45_Gap]                      + [p.Gap] + [(9,  p.SFP)],
-        [(i + 1, p.RJ45) for i in range(8)] + [p.Gap] + [(10, p.SFP)],
+        8*[p.RJ45_Gap]                  + [p.Gap] + [(8, p.SFP)],
+        [(i, p.RJ45) for i in range(8)] + [p.Gap] + [(9, p.SFP)],
     ],
     "MS220-24P": [
         12*[p.RJ45],
-        12*[p.RJ45] + [p.Gap] + [(21 + i, p.SFP) for i in range(4)],
+        12*[p.RJ45] + [p.Gap] + [(20 + i, p.SFP) for i in range(4)],
     ],
     "MS225-48FP": _default_48,
     "MS250-24P":  _default_24,
     "MS250-48FP": _default_48,
     "MS410-16": [
         8*[p.SFP],
-        8*[p.SFP] + [p.Gap] + 2*[p.SFP] + 2*[p.STACK],
+        8*[p.SFP] + [p.Gap] + 2*[p.SFP] + [p.Gap] + 2*[p.STACK],
     ],
     "MS425-32": [
         16*[p.SFP],
@@ -70,7 +70,7 @@ def get_switch_profile(model: str, n_ports: int):
     if model in profiles:
         return profiles[model]
 
-    # Try to guess
+    # Try to guess a default
     n_rj45_ports = n_ports - n_ports % 8
     n_sfp_ports = ((n_ports - n_rj45_ports) // 4) * 4
     n_stack_ports = n_ports - n_rj45_ports - n_sfp_ports
@@ -82,6 +82,7 @@ def get_switch_profile(model: str, n_ports: int):
     if n_rj45_ports == 8 and n_sfp_ports == 2 and n_stack_ports == 0:
         return profiles["default_8"]
 
+    # Try to calculate the profile
     has_gap = int(n_sfp_ports > 0 or n_stack_ports > 0)
     return [
         (n_ports // 2) * [p.RJ45],

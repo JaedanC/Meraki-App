@@ -4,6 +4,7 @@ import json
 import time
 from threading import Thread, Lock
 from typing import Callable, List, Any
+import itertools
 
 import meraki_util
 import pygui
@@ -39,7 +40,7 @@ def switch_filter(query: str, switches: List[Switch]) -> List[Switch]:
             continue
         
         keep_port = False
-        for port in switch.ports + switch.sfp_ports:
+        for port in switch.ports:
             if terms.get("vlan") is not None and terms.get("vlan") != str(port.vlan):
                 continue
 
@@ -60,8 +61,9 @@ def switch_filter(query: str, switches: List[Switch]) -> List[Switch]:
 
 class Switch:
     class SwitchPort:
-        def __init__(self, port: dict):
+        def __init__(self, switch_name: str, port: dict):
             port = RelaxedDictionary(port)
+            self.switch_name = switch_name
             self.portId = port.get("portId")
             self.name = port.get("name")
             self.tags = port.get("tags")
@@ -78,7 +80,21 @@ class Switch:
             self.stickyMacAllowList = port.get("stickyMacAllowList", [])
             self.stickyMacAllowListLimit = port.get("stickyMacAllowListLimit")
         
-        def draw(self, sz_x, sz_y, sfp=False, stack=False):
+        def get_default_sort(self):
+            return [self.switch_name, int(self.portId)]
+
+        def get_column_field(self, idx: int):
+            return [
+                None,
+                self.switch_name,
+                int(self.portId),
+                self.name or "",
+                self.type,
+                self.vlan or 0,
+                self.poeEnabled,
+            ][idx]
+        
+        def draw(self, sz_x, sz_y, top_row=True, sfp=False, stack=False):
             """This function is responsible for drawing a singular port. The room
             you have to draw is denoted by sz_x and sz_y.
             
@@ -87,6 +103,11 @@ class Switch:
             - Otherwise treat this as a regular port. TODO: This currently does
             not take into consideration fibre switches.
             """
+            def show_tooltip():
+                if pygui.is_item_hovered() and pygui.begin_tooltip():
+                    pygui.text(json.dumps(self.__dict__, indent=4))
+                    pygui.end_tooltip()
+
             draw_list = pygui.get_window_draw_list()
 
             cx, cy = pygui.get_cursor_screen_pos()
@@ -105,6 +126,7 @@ class Switch:
             # We don't need to show anything more for stack ports...
             if stack:
                 pygui.dummy((sz_x, sz_y))
+                show_tooltip()
                 return
 
             # Border: PoE
@@ -124,9 +146,6 @@ class Switch:
             # Inner circle: Type
             middle_x = cx + sz_x / 2
             middle_y = cy + sz_y / 2
-
-            # if self.vlan == 201 and self.voiceVlan == 100:
-                # print(self)
 
             if self.type == "access":
                 draw_list.add_circle_filled(
@@ -153,6 +172,7 @@ class Switch:
             )
 
             pygui.dummy((sz_x, sz_y))
+            show_tooltip()
         
     def __init__(self, switch_info: RelaxedDictionary):
         self.name = switch_info.get("name")
@@ -163,32 +183,52 @@ class Switch:
 
         self.switchport_profile = switch_profiles.get_switch_profile(
             self.model, len(switch_info.get("ports")))
-        self.ports = [Switch.SwitchPort(p) for p in switch_info.get("ports")]
-        
-        all_ports = switch_info.get("ports", [])
-        normal_ports = ListDictFilter(switch_info.get("ports", [])) \
-            .filter_function(["type"], lambda t: t != "stack") \
-            .compile_no_relaxed()
-        stack_ports = ListDictFilter(all_ports) \
-            .filter_function(["type"], lambda t: t == "stack") \
-            .compile_no_relaxed()
-        
-        ports = [Switch.SwitchPort(p) for p in normal_ports]
+        self.ports = [Switch.SwitchPort(self.name or self.mac, p) for p in switch_info.get("ports")]
 
-        _extra = len(ports) % 8
-        self._common_ports = len(ports) - _extra
+        # If the switch only has one row, treat it as a bottom row. This will
+        # make the labels appear on the bottom.
+        if len(self.switchport_profile) == 1:
+            iterator = itertools.zip_longest([], self.switchport_profile[0])
+        else:
+            iterator = itertools.zip_longest(self.switchport_profile[0], self.switchport_profile[1])
+        
+        self.top_line = []
+        self.bot_line = []
+        running_port_idx = 0
+        for top, bot in iterator:
+            top: switch_profiles.p
+            bot: switch_profiles.p
 
-        self.ports = ports[:self._common_ports]
-        self.sfp_ports = ports[self._common_ports:]
-        self.stack_ports = [Switch.SwitchPort(p) for p in stack_ports]
+            if top is not None:
+                if top == switch_profiles.p.Gap or top == switch_profiles.p.RJ45_Gap:
+                    self.top_line.append(top)
+                elif isinstance(top, tuple):
+                    self.top_line.append(top)
+                    running_port_idx += 1
+                else:
+                    self.top_line.append((running_port_idx, top))
+                    running_port_idx += 1
+
+            if bot is not None:
+                if bot == switch_profiles.p.Gap or bot == switch_profiles.p.RJ45_Gap:
+                    self.bot_line.append(bot)
+                elif isinstance(bot, tuple):
+                    self.bot_line.append(bot)
+                    running_port_idx += 1
+                else:
+                    self.bot_line.append((running_port_idx, bot))
+                    running_port_idx += 1
     
+
     def draw(self):
         """Draw the switch and its ports."""
-        SIZE = 40
-        SFP_MULTIPLIER = 1.1
-        STACK_MULTIPLER = 2
+        PORT_HEIGHT = 40
+        RJ45_WIDTH = 40
+        SFP_WIDTH = 45
+        STACK_WIDTH = 80
+        GAP_WIDTH = 5
 
-        def show_port_text(port_text: str, width: float):
+        def _show_port_text(port_text: str, width: float):
             port_text_len = pygui.calc_text_size(port_text)[0]
             pygui.set_cursor_pos_x(
                 pygui.get_cursor_pos_x() + width / 2 - port_text_len / 2)
@@ -196,68 +236,54 @@ class Switch:
             pygui.push_style_color(pygui.COL_TEXT, pygui.color_convert_float4_to_u32((0.4, 0.4, 0.4, 1)))
             pygui.text(port_text)
             pygui.pop_style_color()
-
-        switch_has_one_port_line = len(self.ports) < 16
-        for i in range(len(self.ports)):
-            # Same line the SFP etc. ports
-            if i > 0 and (i != self._common_ports // 2 or switch_has_one_port_line):
-                pygui.same_line()
-            
-            # Gap between sets of 12 ports
-            if (self._common_ports % 6 == 0 \
-                    and i % 6 == 0 \
-                    and i != 0 \
-                    and i != self._common_ports // 2):
-                pygui.dummy((5, 0))
-                pygui.same_line()
-            
-            pygui.begin_group()
-
-
-            if switch_has_one_port_line:
-                # 0, 1, 2, 3, 4
-                port_id = i
-                in_first_line = False
-            elif  i < len(self.ports) // 2:
-                # 0, 2, 4, 6,
-                port_id = i * 2
-                in_first_line = True
-            else:
-                # 1, 3, 5, 7
-                port_id = (i * 2 % len(self.ports)) + 1
-                in_first_line = False
-
-            port = self.ports[port_id]
-            
-            if not in_first_line:
-                port.draw(SIZE, SIZE)
-            show_port_text(str(port_id + 1), SIZE)
-            if in_first_line:
-                port.draw(SIZE, SIZE)
-            
-            pygui.end_group()
         
-        pygui.same_line()
-        pygui.dummy((10, 0))
+        for i, port_type in enumerate(self.top_line + self.bot_line):
+            is_first_line = i < len(self.top_line)
+            if i > 0 and i != len(self.top_line):
+                pygui.same_line()
+            
+            if isinstance(port_type, tuple):
+                assert port_type[0] < len(self.ports), \
+                    "Error: Remember, port_id must be an index. len(ports): {}, index: {}".format(
+                        len(self.ports), port_type[0]
+                )
+                port = self.ports[port_type[0]]
+                port_type = port_type[1]
+            else:
+                port = None
+            
+            if port_type == switch_profiles.p.Gap:
+                pygui.dummy((GAP_WIDTH, 0))
+                continue
 
-        for i, sfp in enumerate(self.sfp_ports):
-            pygui.same_line()
+            if port_type == switch_profiles.p.RJ45_Gap:
+                pygui.dummy((RJ45_WIDTH, PORT_HEIGHT))
+                continue
+            
+            # Draw the port
+            assert port != None
+            port: Switch.SwitchPort
+
+            sfp = False
+            stack = False
+            if port_type == switch_profiles.p.RJ45:
+                size = RJ45_WIDTH
+            elif port_type == switch_profiles.p.SFP:
+                size = SFP_WIDTH
+                sfp = True
+            else:
+                size = STACK_WIDTH
+                stack = True
+            
             pygui.begin_group()
-            sfp.draw(SIZE * SFP_MULTIPLIER, SIZE, sfp=True)
-            show_port_text(str(len(self.ports) + i + 1), SIZE * SFP_MULTIPLIER)
+            if is_first_line:
+                _show_port_text(port.portId, size)
+                port.draw(size, PORT_HEIGHT, is_first_line, sfp, stack)
+            else:
+                port.draw(size, PORT_HEIGHT, is_first_line, sfp, stack)
+                _show_port_text(port.portId, size)
             pygui.end_group()
-
-        # Gap for stack ports
-        pygui.same_line()
-        pygui.dummy((10, 0))
-
-        for i, stack_port in enumerate(self.stack_ports):
-            pygui.same_line()
-            pygui.begin_group()
-            stack_port.draw(SIZE * STACK_MULTIPLER, SIZE, stack=True)
-            show_port_text(str(i + 1), SIZE * STACK_MULTIPLER)
-            pygui.end_group()
-
+            
 
 class Cache:
     def __init__(self, cache: dict):
@@ -367,8 +393,9 @@ class BackupApp:
             self.refresh_callback
         )
 
-        self.filtered_switches: List[Switch] = None
-        self.network_search = pygui.String("")
+        self.switches_filtered: List[Switch] = None
+        self.switch_search = pygui.String("")
+        self.switchports: List[Switch.SwitchPort] = None
         self.refresh_callback()
         
 
@@ -387,7 +414,8 @@ class BackupApp:
         self.networks = [RelaxedDictionary(n) for n in self.p_organization_networks.response() if n["id"] in network_set]
 
 
-    def logic(self):
+    def switch_draw(self):
+        pygui.text("FPS: {:.1f}".format(pygui.get_io().framerate))
         self.p_organization_switches.draw_refresh_button("Get Organisation Switch Ports")
         self.p_organization_networks.draw_refresh_button("Get Organisation Networks")
 
@@ -395,10 +423,10 @@ class BackupApp:
             or not self.p_organization_switches.response_exists():
             return
         
-        if pygui.input_text("Filter", self.network_search) or self.filtered_switches is None:
-            self.filtered_switches = switch_filter(self.network_search.value, self.switches)
+        if pygui.input_text("Filter", self.switch_search) or self.switches_filtered is None:
+            self.switches_filtered = switch_filter(self.switch_search.value, self.switches)
 
-        if len(self.network_search.value) == 0:
+        if len(self.switch_search.value) == 0:
             for network in self.networks:
                 if not pygui.collapsing_header(network.get("name")):
                     continue
@@ -409,13 +437,112 @@ class BackupApp:
                         switch.draw()
                         pygui.tree_pop()
         else:
-            for switch in self.filtered_switches:
+            for switch in self.switches_filtered:
                 if pygui.tree_node((switch.name or switch.mac) + " " + switch.model):
                     switch.draw()
                     pygui.tree_pop()
 
-                    
+    
+    def switchports_draw(self):
+        table_flags = pygui.TABLE_FLAGS_RESIZABLE | \
+            pygui.TABLE_FLAGS_REORDERABLE | \
+            pygui.TABLE_FLAGS_HIDEABLE | \
+            pygui.TABLE_FLAGS_SORTABLE | \
+            pygui.TABLE_FLAGS_SORT_MULTI | \
+            pygui.TABLE_FLAGS_ROW_BG | \
+            pygui.TABLE_FLAGS_BORDERS_OUTER | \
+            pygui.TABLE_FLAGS_BORDERS_V | \
+            pygui.TABLE_FLAGS_NO_BORDERS_IN_BODY | \
+            pygui.TABLE_FLAGS_SCROLL_Y
+        
+        if pygui.begin_table("switchport_sorting", 7, table_flags):
+            pygui.table_setup_column("Preview",   pygui.TABLE_COLUMN_FLAGS_NO_SORT)
+            pygui.table_setup_column("Switch",    pygui.TABLE_COLUMN_FLAGS_DEFAULT_SORT | pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
+            pygui.table_setup_column("Port Id",   pygui.TABLE_COLUMN_FLAGS_DEFAULT_SORT | pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
+            pygui.table_setup_column("Name",      pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
+            pygui.table_setup_column("Port Type", pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
+            pygui.table_setup_column("VLAN",      pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
+            pygui.table_setup_column("POE",       pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
+            pygui.table_setup_scroll_freeze(0, 1) # Make row always visible
+            pygui.table_headers_row()
+
+            if self.switchports is None:
+                self.switchports = []
+                for switch in self.switches_filtered[:50]:
+                    for port in switch.ports:
+                        self.switchports.append(port)
+
+            def custom_key(port: Switch.SwitchPort):
+                # From: https://stackoverflow.com/a/75123782
+                # name changed; otherwise the same
+                class negated:
+                    def __init__(self, obj):
+                        self.obj = obj
+
+                    def __eq__(self, other):
+                        return other.obj == self.obj
+
+                    def __lt__(self, other):
+                        return other.obj < self.obj
+
+                sort_specs = pygui.table_get_sort_specs()
+                sort_with = []
+                for sort_spec in sort_specs.specs:
+                    compare_obj = None
+                    compare_obj = port.get_column_field(sort_spec.column_index)
+
+                    if sort_spec.sort_direction == pygui.SORT_DIRECTION_DESCENDING:
+                        compare_obj = negated(compare_obj)
+                    sort_with.append(compare_obj)
+                
+                # Add some default sorting fields
+                sort_with += port.get_default_sort()
+                return tuple(sort_with)
+
+            # Sort our data if sort specs have been changed!
+            if (sort_specs := pygui.table_get_sort_specs()):
+                if sort_specs.specs_dirty:
+                    self.switchports.sort(key=custom_key)
+                sort_specs.specs_dirty = False
+            
+            # Demonstrate using clipper for large vertical lists
+            clipper = pygui.ImGuiListClipper.create()
+
+            # This is our first example of not being able to share heap objects
+            # across the dll. I need to get a pointer to a valid type that it
+            # creates, not me. This requires adding a custom constructor and 
+            # destructor for the ImGuiListClipper class.
+            clipper.begin(len(self.switchports))
+            while clipper.step():
+                for row_n in range(clipper.display_start, clipper.display_end):
+                    # Display a data item
+                    port: Switch.SwitchPort = self.switchports[row_n]
+                    pygui.push_id((port.switch_name, port.portId))
+                    pygui.table_next_row()
+                    pygui.table_next_column()
+                    port.draw(30, 20, False)
+                    pygui.table_next_column()
+                    pygui.text_unformatted(port.switch_name)
+                    pygui.table_next_column()
+                    pygui.text(str(port.portId))
+                    pygui.table_next_column()
+                    pygui.text(port.name or "")
+                    pygui.table_next_column()
+                    pygui.text(port.type)
+                    pygui.table_next_column()
+                    pygui.text(str(port.vlan))
+                    pygui.table_next_column()
+                    pygui.text(str(port.poeEnabled))
+                    pygui.pop_id()
+            clipper.destroy()
+
+            pygui.end_table()
+
+
     def draw(self):
         pygui.begin("Meraki Backup")
-        self.logic()
+        self.switch_draw()
+        pygui.end()
+        pygui.begin("Switch Ports")
+        self.switchports_draw()
         pygui.end()
