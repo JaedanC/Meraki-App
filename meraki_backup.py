@@ -3,13 +3,48 @@ import datetime
 import json
 import time
 from threading import Thread, Lock
-from typing import Callable, List, Any
+from typing import Callable, List, Any, Tuple
 import itertools
 
 import meraki_util
 import pygui
 import switch_profiles
-from api import RelaxedDictionary, ListDictFilter
+from api import RelaxedDictionary
+
+
+FUNC_TERM_IN_FIELD =       lambda term, field: term in field
+FUNC_TERM_EQUAL_TO_FIELD = lambda term, field: term == field
+
+
+def get_query_terms(query: str) -> RelaxedDictionary:
+    query = query.lower()
+    terms = {}
+    for t in query.split(" "):
+        if ":" not in t:
+            terms["name"] = t
+            continue
+
+        t = t.split(":", 1)
+        terms[t[0]] = t[1]
+    return RelaxedDictionary(terms)
+
+
+def should_show(
+        query_dict: RelaxedDictionary,
+        lookups: List[Tuple[str, Any, Callable[[Any, Any], bool]]],
+    ):
+    """Only returns true if every query term passes the lookup function,
+    otherwise returns False.
+    """
+    for query_term, field, func in lookups:
+        if (query_value := query_dict.get(query_term)) is None:
+            continue
+
+        field = str(field).lower()
+        if not func(query_value, field):
+            return False
+
+    return True
 
 
 def switch_filter(query: str, switches: List[Switch]) -> List[Switch]:
@@ -18,43 +53,54 @@ def switch_filter(query: str, switches: List[Switch]) -> List[Switch]:
     query string updates (not every frame) so we can get away with an expensive
     operation.
     """
-    query = query.lower()
-
-    terms = {} 
-    for t in query.split(" "):
-        if ":" not in t:
-            terms["name"] = t
-            continue
-
-        t = t.split(":", 1)
-        terms[t[0]] = t[1]
-    
-    terms = RelaxedDictionary(terms)
+    terms = get_query_terms(query)
 
     to_keep = []
     for switch in switches:
-        if terms.get("name") is not None and terms.get("name") not in switch.name.lower():
+        lookups = [
+            ("name",    switch.name,         FUNC_TERM_IN_FIELD),
+            ("network", switch.network_name, FUNC_TERM_IN_FIELD),
+            ("model",   switch.model,        FUNC_TERM_IN_FIELD),
+        ]
+        if not should_show(terms, lookups):
             continue
 
-        if terms.get("model") is not None and terms.get("model") not in switch.model.lower():
-            continue
-        
         keep_port = False
         for port in switch.ports:
-            if terms.get("vlan") is not None and terms.get("vlan") != str(port.vlan):
-                continue
+            lookups = [
+                ("vlan",  port.vlan,       FUNC_TERM_EQUAL_TO_FIELD),
+                ("voice", port.voiceVlan,  FUNC_TERM_EQUAL_TO_FIELD),
+                ("poe",   port.poeEnabled, FUNC_TERM_IN_FIELD),
+                ("type",  port.type,       FUNC_TERM_IN_FIELD),
+            ]
+            if should_show(terms, lookups):
+                keep_port = True
+                break
 
-            if terms.get("voice") is not None and terms.get("voice") != str(port.voiceVlan):
-                continue
-            
-            if terms.get("poe") is not None and terms.get("poe") != str(port.poeEnabled).lower():
-                continue
-
-            keep_port = True
-            break
-        
         if keep_port:
             to_keep.append(switch)
+
+    return to_keep
+
+
+def switch_port_filter(query: str, ports: List[Switch.SwitchPort]) -> List[Switch.SwitchPort]:
+    terms = get_query_terms(query)
+    to_keep = []
+
+    for port in ports:
+        lookups = [
+            ("name",    port.name,        FUNC_TERM_IN_FIELD),
+            ("switch",  port.switch_name, FUNC_TERM_IN_FIELD),
+            ("enabled", port.enabled,     FUNC_TERM_IN_FIELD),
+            ("vlan",    port.vlan,        FUNC_TERM_EQUAL_TO_FIELD),
+            ("type",    port.type,        FUNC_TERM_IN_FIELD),
+            ("voice",   port.voiceVlan,   FUNC_TERM_EQUAL_TO_FIELD),
+            ("poe",     port.poeEnabled,  FUNC_TERM_IN_FIELD),
+            ("id",      port.portId,      FUNC_TERM_EQUAL_TO_FIELD),
+        ]
+
+        if should_show(terms, lookups):
+            to_keep.append(port)
 
     return to_keep
 
@@ -91,6 +137,7 @@ class Switch:
                 self.name or "",
                 self.type,
                 self.vlan or 0,
+                self.voiceVlan or 0,
                 self.poeEnabled,
             ][idx]
         
@@ -179,6 +226,7 @@ class Switch:
         self.serial = switch_info.get("serial")
         self.mac = switch_info.get("mac")
         self.network_id = switch_info.get("network", "id")
+        self.network_name = switch_info.get("network", "name")
         self.model = switch_info.get("model")
 
         self.switchport_profile = switch_profiles.get_switch_profile(
@@ -393,9 +441,11 @@ class BackupApp:
             self.refresh_callback
         )
 
-        self.switches_filtered: List[Switch] = None
         self.switch_search = pygui.String("")
-        self.switchports: List[Switch.SwitchPort] = None
+        self.switch_port_search = pygui.String("")
+        self.switches_filtered: List[Switch] = None
+        self.switches_filtered_ports: List[Switch.SwitchPort] = None
+        self.switches_filtered_ports_filtered: List[Switch.SwitchPort] = None
         self.refresh_callback()
         
 
@@ -405,6 +455,7 @@ class BackupApp:
             return
         
         self.switches: List[Switch] = []
+        self.switches_filtered = None
         network_set = set()
         for switch in self.p_organization_switches.response():
             switch = RelaxedDictionary(switch)
@@ -425,14 +476,16 @@ class BackupApp:
         
         if pygui.input_text("Filter", self.switch_search) or self.switches_filtered is None:
             self.switches_filtered = switch_filter(self.switch_search.value, self.switches)
+            self.switches_filtered_ports = sum([s.ports for s in self.switches_filtered], start=[])
+            self.switches_filtered_ports_filtered = None
 
-        if len(self.switch_search.value) == 0:
+        if len(self.switch_search.value) == 0 or get_query_terms(self.switch_search.value).get("network") is not None:
             for network in self.networks:
-                if not pygui.collapsing_header(network.get("name")):
-                    continue
-                
-                switches: List[Switch] = list(filter(lambda s: s.network_id == network.get("id"), self.switches))
-                for switch in switches:
+                switches: List[Switch] = list(filter(lambda s: s.network_id == network.get("id"), self.switches_filtered))
+                for i, switch in enumerate(switches):
+                    if i == 0 and not pygui.collapsing_header(network.get("name")):
+                        break
+
                     if pygui.tree_node((switch.name or switch.mac) + " " + switch.model):
                         switch.draw()
                         pygui.tree_pop()
@@ -444,6 +497,9 @@ class BackupApp:
 
     
     def switchports_draw(self):
+        if pygui.input_text("Filter Ports", self.switch_port_search) or self.switches_filtered_ports_filtered is None:
+            self.switches_filtered_ports_filtered = switch_port_filter(self.switch_port_search.value, self.switches_filtered_ports)
+
         table_flags = pygui.TABLE_FLAGS_RESIZABLE | \
             pygui.TABLE_FLAGS_REORDERABLE | \
             pygui.TABLE_FLAGS_HIDEABLE | \
@@ -455,22 +511,17 @@ class BackupApp:
             pygui.TABLE_FLAGS_NO_BORDERS_IN_BODY | \
             pygui.TABLE_FLAGS_SCROLL_Y
         
-        if pygui.begin_table("switchport_sorting", 7, table_flags):
-            pygui.table_setup_column("Preview",   pygui.TABLE_COLUMN_FLAGS_NO_SORT)
-            pygui.table_setup_column("Switch",    pygui.TABLE_COLUMN_FLAGS_DEFAULT_SORT | pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
-            pygui.table_setup_column("Port Id",   pygui.TABLE_COLUMN_FLAGS_DEFAULT_SORT | pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
-            pygui.table_setup_column("Name",      pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
-            pygui.table_setup_column("Port Type", pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
-            pygui.table_setup_column("VLAN",      pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
-            pygui.table_setup_column("POE",       pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
+        if pygui.begin_table("switchport_sorting", 8, table_flags):
+            pygui.table_setup_column("Preview",    pygui.TABLE_COLUMN_FLAGS_NO_SORT)
+            pygui.table_setup_column("Switch",     pygui.TABLE_COLUMN_FLAGS_DEFAULT_SORT | pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
+            pygui.table_setup_column("Port Id",    pygui.TABLE_COLUMN_FLAGS_DEFAULT_SORT | pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
+            pygui.table_setup_column("Name",       pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
+            pygui.table_setup_column("Port Type",  pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
+            pygui.table_setup_column("VLAN",       pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
+            pygui.table_setup_column("Voice VLAN", pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
+            pygui.table_setup_column("POE",        pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
             pygui.table_setup_scroll_freeze(0, 1) # Make row always visible
             pygui.table_headers_row()
-
-            if self.switchports is None:
-                self.switchports = []
-                for switch in self.switches_filtered[:50]:
-                    for port in switch.ports:
-                        self.switchports.append(port)
 
             def custom_key(port: Switch.SwitchPort):
                 # From: https://stackoverflow.com/a/75123782
@@ -502,9 +553,9 @@ class BackupApp:
             # Sort our data if sort specs have been changed!
             if (sort_specs := pygui.table_get_sort_specs()):
                 if sort_specs.specs_dirty:
-                    self.switchports.sort(key=custom_key)
+                    self.switches_filtered_ports_filtered.sort(key=custom_key)
                 sort_specs.specs_dirty = False
-            
+
             # Demonstrate using clipper for large vertical lists
             clipper = pygui.ImGuiListClipper.create()
 
@@ -512,11 +563,11 @@ class BackupApp:
             # across the dll. I need to get a pointer to a valid type that it
             # creates, not me. This requires adding a custom constructor and 
             # destructor for the ImGuiListClipper class.
-            clipper.begin(len(self.switchports))
+            clipper.begin(len(self.switches_filtered_ports_filtered))
             while clipper.step():
                 for row_n in range(clipper.display_start, clipper.display_end):
                     # Display a data item
-                    port: Switch.SwitchPort = self.switchports[row_n]
+                    port: Switch.SwitchPort = self.switches_filtered_ports_filtered[row_n]
                     pygui.push_id((port.switch_name, port.portId))
                     pygui.table_next_row()
                     pygui.table_next_column()
@@ -531,6 +582,8 @@ class BackupApp:
                     pygui.text(port.type)
                     pygui.table_next_column()
                     pygui.text(str(port.vlan))
+                    pygui.table_next_column()
+                    pygui.text(str(port.voiceVlan))
                     pygui.table_next_column()
                     pygui.text(str(port.poeEnabled))
                     pygui.pop_id()

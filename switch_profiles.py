@@ -25,6 +25,7 @@ profiles = {
     "default_8": _default_8,
     "default_24": _default_24,
     "default_48": _default_48,
+    "MS120-8": _default_8,
     "MS120-8FP": _default_8,
     "MS120-48FP": [
         24*[p.RJ45] + [p.Gap] + 2*[p.SFP],
