@@ -21,7 +21,12 @@ _default_48 = [
 ]
 
 profiles = {
-    # "C9200L-24P-4Xe": _default_24, # Testing that this works
+    "C9200L-24P-4X": _default_24, # Testing that this works
+    "C9200L-48P-4X": _default_48,
+    "C9300-48P": [
+        24*[p.RJ45],
+        24*[p.RJ45] + [p.Gap] + 2*[p.STACK] + [p.Gap] + 4*[p.SFP],
+    ],
     "default_8": _default_8,
     "default_24": _default_24,
     "default_48": _default_48,

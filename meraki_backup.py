@@ -1,6 +1,7 @@
 from __future__ import annotations
 import datetime
 import json
+import random
 import time
 from threading import Thread, Lock
 from typing import Callable, List, Any, Tuple
@@ -60,6 +61,7 @@ def switch_filter(query: str, switches: List[Switch]) -> List[Switch]:
         lookups = [
             ("name",    switch.name,         FUNC_TERM_IN_FIELD),
             ("network", switch.network_name, FUNC_TERM_IN_FIELD),
+            ("site",    switch.network_name, FUNC_TERM_IN_FIELD),
             ("model",   switch.model,        FUNC_TERM_IN_FIELD),
         ]
         if not should_show(terms, lookups):
@@ -105,9 +107,41 @@ def switch_port_filter(query: str, ports: List[Switch.SwitchPort]) -> List[Switc
     return to_keep
 
 
+class PortProfile:
+    def __init__(self, port: Switch.SwitchPort):
+        self.port = port
+        self.included_fields = {f: pygui.Bool(True) for f in port.get_json().keys()}
+        self.port_colour = pygui.Vec4(
+            random.random(),
+            random.random(),
+            random.random(),
+            1
+        )
+    
+    def includes(self, other_port: Switch.SwitchPort):
+        my_json = self.port.get_json()
+        other_json = other_port.get_json()
+        for field, is_selected in self.included_fields.items():
+            if not is_selected:
+                continue
+
+            if my_json.get(field) != other_json.get(field):
+                return False
+        return True
+    
+    def draw(self):
+        pygui.begin_group()
+        self.port.draw(50, 50)
+        pygui.color_edit4(f"Colour ##{hash(self)}", self.port_colour, pygui.COLOR_EDIT_FLAGS_NO_INPUTS)
+        for field, is_selected in self.included_fields.items():
+            pygui.checkbox(f"{field}: {self.port.get_json()[field]} ##{hash(self)}", is_selected)
+        pygui.end_group()
+    
+
 class Switch:
     class SwitchPort:
         def __init__(self, switch_name: str, port: dict):
+            self._raw = port
             port = RelaxedDictionary(port)
             self.switch_name = switch_name
             self.portId = port.get("portId")
@@ -126,14 +160,27 @@ class Switch:
             self.stickyMacAllowList = port.get("stickyMacAllowList", [])
             self.stickyMacAllowListLimit = port.get("stickyMacAllowListLimit")
         
+        def get_json(self) -> dict:
+            return self._raw
+
         def get_default_sort(self):
-            return [self.switch_name, int(self.portId)]
+            try:
+                port_id = int(self.portId)
+            except ValueError:
+                port_id = self.portId
+
+            return [self.switch_name, port_id]
 
         def get_column_field(self, idx: int):
+            try:
+                port_id = int(self.portId)
+            except ValueError:
+                port_id = self.portId
+            
             return [
                 None,
                 self.switch_name,
-                int(self.portId),
+                port_id,
                 self.name or "",
                 self.type,
                 self.vlan or 0,
@@ -152,7 +199,7 @@ class Switch:
             """
             def show_tooltip():
                 if pygui.is_item_hovered() and pygui.begin_tooltip():
-                    pygui.text(json.dumps(self.__dict__, indent=4))
+                    pygui.text(str(self))
                     pygui.end_tooltip()
 
             draw_list = pygui.get_window_draw_list()
@@ -172,7 +219,7 @@ class Switch:
 
             # We don't need to show anything more for stack ports...
             if stack:
-                pygui.dummy((sz_x, sz_y))
+                pygui.invisible_button(str(hash(self)), (sz_x, sz_y))
                 show_tooltip()
                 return
 
@@ -218,9 +265,12 @@ class Switch:
                 str(text)
             )
 
-            pygui.dummy((sz_x, sz_y))
+            pygui.invisible_button(str(hash(self)), (sz_x, sz_y))
             show_tooltip()
         
+        def __repr__(self):
+            return json.dumps(self._raw, indent=4)
+
     def __init__(self, switch_info: RelaxedDictionary):
         self.name = switch_info.get("name")
         self.serial = switch_info.get("serial")
@@ -326,12 +376,19 @@ class Switch:
             pygui.begin_group()
             if is_first_line:
                 _show_port_text(port.portId, size)
+
+            port.draw(size, PORT_HEIGHT, is_first_line, sfp, stack)
+            if pygui.begin_drag_drop_source():
+                pygui.set_drag_drop_payload("Port", port)
                 port.draw(size, PORT_HEIGHT, is_first_line, sfp, stack)
-            else:
-                port.draw(size, PORT_HEIGHT, is_first_line, sfp, stack)
-                _show_port_text(port.portId, size)
-            pygui.end_group()
+                pygui.end_drag_drop_source()
             
+            if not is_first_line:
+                _show_port_text(port.portId, size)
+        
+            
+            pygui.end_group()
+
 
 class Cache:
     def __init__(self, cache: dict):
@@ -441,6 +498,7 @@ class BackupApp:
             self.refresh_callback
         )
 
+        self.port_profiles: List[PortProfile] = []
         self.switch_search = pygui.String("")
         self.switch_port_search = pygui.String("")
         self.switches_filtered: List[Switch] = None
@@ -478,8 +536,10 @@ class BackupApp:
             self.switches_filtered = switch_filter(self.switch_search.value, self.switches)
             self.switches_filtered_ports = sum([s.ports for s in self.switches_filtered], start=[])
             self.switches_filtered_ports_filtered = None
-
-        if len(self.switch_search.value) == 0 or get_query_terms(self.switch_search.value).get("network") is not None:
+        
+        qt = get_query_terms(self.switch_search.value)
+        filtering_by_network = (qt.get("network") or qt.get("site")) is not None
+        if len(self.switch_search.value) == 0 or filtering_by_network:
             for network in self.networks:
                 switches: List[Switch] = list(filter(lambda s: s.network_id == network.get("id"), self.switches_filtered))
                 for i, switch in enumerate(switches):
@@ -516,7 +576,7 @@ class BackupApp:
             pygui.table_setup_column("Switch",     pygui.TABLE_COLUMN_FLAGS_DEFAULT_SORT | pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
             pygui.table_setup_column("Port Id",    pygui.TABLE_COLUMN_FLAGS_DEFAULT_SORT | pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
             pygui.table_setup_column("Name",       pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
-            pygui.table_setup_column("Port Type",  pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
+            pygui.table_setup_column("Type",       pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
             pygui.table_setup_column("VLAN",       pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
             pygui.table_setup_column("Voice VLAN", pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
             pygui.table_setup_column("POE",        pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
@@ -524,30 +584,45 @@ class BackupApp:
             pygui.table_headers_row()
 
             def custom_key(port: Switch.SwitchPort):
-                # From: https://stackoverflow.com/a/75123782
-                # name changed; otherwise the same
-                class negated:
+                class Sortable:
                     def __init__(self, obj):
                         self.obj = obj
 
                     def __eq__(self, other):
-                        return other.obj == self.obj
+                        return str(other.obj) == str(self.obj)
 
                     def __lt__(self, other):
+                        if type(self.obj) != type(other.obj):
+                            return str(other.obj) > str(self.obj)
+                        return other.obj > self.obj
+                
+                # From: https://stackoverflow.com/a/75123782
+                class SortableNegative:
+                    def __init__(self, obj):
+                        self.obj = obj
+
+                    def __eq__(self, other):
+                        return str(other.obj) == str(self.obj)
+
+                    def __lt__(self, other):
+                        if type(self.obj) != type(other.obj):
+                            return str(other.obj) < str(self.obj)
                         return other.obj < self.obj
 
                 sort_specs = pygui.table_get_sort_specs()
                 sort_with = []
                 for sort_spec in sort_specs.specs:
-                    compare_obj = None
                     compare_obj = port.get_column_field(sort_spec.column_index)
 
                     if sort_spec.sort_direction == pygui.SORT_DIRECTION_DESCENDING:
-                        compare_obj = negated(compare_obj)
+                        compare_obj = SortableNegative(compare_obj)
+                    else:
+                        compare_obj = Sortable(compare_obj)
+
                     sort_with.append(compare_obj)
                 
                 # Add some default sorting fields
-                sort_with += port.get_default_sort()
+                sort_with += [Sortable(d) for d in port.get_default_sort()]
                 return tuple(sort_with)
 
             # Sort our data if sort specs have been changed!
@@ -592,10 +667,32 @@ class BackupApp:
             pygui.end_table()
 
 
+    def port_profile_draw(self):
+        pygui.begin_group()
+        if len(self.port_profiles) == 0:
+            pygui.text("Drag profiles here")
+        else:
+            for i, port_profile in enumerate(self.port_profiles):
+                if i > 0:
+                    pygui.same_line()
+
+                port_profile.draw()
+        pygui.end_group()
+
+        if pygui.begin_drag_drop_target():
+            payload = pygui.accept_drag_drop_payload("Port")
+            if payload is not None:
+                self.port_profiles.append(PortProfile(payload.data))
+            pygui.end_drag_drop_target()
+
+
     def draw(self):
         pygui.begin("Meraki Backup")
         self.switch_draw()
         pygui.end()
         pygui.begin("Switch Ports")
         self.switchports_draw()
+        pygui.end()
+        pygui.begin("Port Profiles")
+        self.port_profile_draw()
         pygui.end()
