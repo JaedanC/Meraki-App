@@ -3,8 +3,8 @@ venv
 pygui
 logs
 cache
+run_cache
 
 imgui.ini
-query_cache.json
 
 *api_key*

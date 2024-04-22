@@ -20,7 +20,7 @@ _default_48 = [
     24*[p.RJ45] + [p.Gap] + 4*[p.SFP] + [p.Gap] + 2*[p.STACK],
 ]
 
-profiles = {
+switch_lookup = {
     "C9200L-24P-4X": _default_24, # Testing that this works
     "C9200L-48P-4X": _default_48,
     "C9300-48P": [
@@ -73,8 +73,8 @@ profiles = {
 
 
 def get_switch_profile(model: str, n_ports: int):
-    if model in profiles:
-        return profiles[model]
+    if model in switch_lookup:
+        return switch_lookup[model]
 
     # Try to guess a default
     n_rj45_ports = n_ports - n_ports % 8
@@ -82,11 +82,11 @@ def get_switch_profile(model: str, n_ports: int):
     n_stack_ports = n_ports - n_rj45_ports - n_sfp_ports
 
     if n_rj45_ports == 24 and n_sfp_ports == 4 and n_stack_ports == 2:
-        return profiles["default_24"]
+        return switch_lookup["default_24"]
     if n_rj45_ports == 48 and n_sfp_ports == 4 and n_stack_ports == 2:
-        return profiles["default_48"]
+        return switch_lookup["default_48"]
     if n_rj45_ports == 8 and n_sfp_ports == 2 and n_stack_ports == 0:
-        return profiles["default_8"]
+        return switch_lookup["default_8"]
 
     # Try to calculate the profile
     has_gap = int(n_sfp_ports > 0 or n_stack_ports > 0)

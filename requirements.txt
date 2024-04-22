@@ -1,5 +1,6 @@
 glfw
 Pillow
 PyOpenGL
+pyperclip
 meraki
 requests
