@@ -2,7 +2,13 @@ import pygui
 import glfw
 import OpenGL.GL as gl
 from pygui_demo import demo_fonts_init, pygui_demo_window
-from meraki_backup import BackupApp
+from src.meraki_app import MerakiApp
+
+from ctypes import util
+try:
+    from OpenGL.platform import win32
+except AttributeError:
+    pass
 
 
 vsync_enabled = pygui.Bool(True)
@@ -10,7 +16,7 @@ show_imgui_demo = pygui.Bool(False)
 show_pygui_demo = pygui.Bool(True)
 
 
-backup_app = BackupApp()
+backup_app = MerakiApp()
 
 
 def render():
@@ -33,7 +39,7 @@ def main():
     glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 2)
     glfw.window_hint(glfw.RESIZABLE, glfw.TRUE)
 
-    window = glfw.create_window(600, 400, "Hello World!", None, None)
+    window = glfw.create_window(600, 400, "Meraki App", None, None)
     if window is None:
        print("Failed to create window! Terminating")
        glfw.terminate()

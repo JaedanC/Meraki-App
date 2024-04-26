@@ -4,48 +4,109 @@ import itertools
 import json
 import random
 import time
+import traceback
 from threading import Thread, Lock
 from typing import Callable, List, Any, Tuple, Dict
 
 import meraki_util
 import pygui
-import switch_profiles
-import pyperclip
-from api import RelaxedDictionary
+from api import RelaxedDictionary, safe_open_w
+
+from . import switch_profiles
+from . import pygui_ext
+
+    
+class Sortable:
+    def __init__(self, obj):
+        self.obj = obj
+
+    def __eq__(self, other):
+        return str(other.obj) == str(self.obj)
+
+    def __lt__(self, other):
+        if type(self.obj) != type(other.obj):
+            return str(other.obj) > str(self.obj)
+        return other.obj > self.obj
+
+# From: https://stackoverflow.com/a/75123782
+class SortableNegative:
+    def __init__(self, obj):
+        self.obj = obj
+
+    def __eq__(self, other):
+        return str(other.obj) == str(self.obj)
+
+    def __lt__(self, other):
+        if type(self.obj) != type(other.obj):
+            return str(other.obj) < str(self.obj)
+        return other.obj < self.obj
 
 
-FUNC_TERM_IN_FIELD =       lambda term, field: term in field
-FUNC_TERM_EQUAL_TO_FIELD = lambda term, field: term == field
+def FUNC_TERM_IN_FIELD(query: str, data_value: str):
+    query = query.replace("_", " ")
+    return query in data_value
+
+FUNC_TERM_EQUAL_TO_FIELD = lambda query, data_value: query == data_value
 
 
-def get_query_terms(query: str) -> RelaxedDictionary:
+def get_query_terms(
+        query: str,
+        default="name"
+    ) -> Dict[str, Tuple[List[str], bool]]:
+    """Returns a dictionary containing the query terms. Eg.
+
+    Waratah poe:true vlan:999|200 voice:100 allowed!990|all
+
+    {
+        "name":  (["Waratah"],    True),
+        "poe":   (["true"],       True),
+        "vlan":  (["999", "200"], True),
+        "voice": (["100"],        True),
+        "stp":   (["990", "all"], False),
+    }
+
+    : Is a normal match
+    ! is a negated result
+    """
     query = query.lower()
     terms = {}
     for t in query.split(" "):
-        if ":" not in t:
-            terms["name"] = t
+        if ":" not in t and "!" not in t:
+            terms[default] = (t.split("|"), True)
             continue
 
-        t = t.split(":", 1)
-        terms[t[0]] = t[1]
-    return RelaxedDictionary(terms)
+        if ":" in t:
+            t = t.split(":", 1)
+            terms[t[0]] = (t[1].split("|"), True)
+        elif "!" in t:
+            t = t.split("!", 1)
+            terms[t[0]] = (t[1].split("|"), False)
+    return terms
 
 
 def should_show(
-        query_dict: RelaxedDictionary,
+        query_dict: Dict[str, Tuple[List[str], bool]],
         lookups: List[Tuple[str, Any, Callable[[Any, Any], bool]]],
     ):
     """Only returns true if every query term passes the lookup function,
     otherwise returns False.
     """
     for query_term, field, func in lookups:
-        if (query_value := query_dict.get(query_term)) is None:
+        if (query_extract := query_dict.get(query_term)) is None:
             continue
 
-        field = str(field).lower()
-        if not func(query_value, field):
-            return False
+        query_values, true_is_pass = query_extract
 
+        field = str(field).lower()
+        for query_value in query_values:
+            func_result = func(query_value, field)
+
+            if func_result and true_is_pass:
+                continue
+            elif not func_result and not true_is_pass:
+                continue
+
+            return False
     return True
 
 
@@ -76,6 +137,8 @@ def switch_filter(query: str, switches: List[Switch]) -> List[Switch]:
                 ("poe",     port.poeEnabled,   FUNC_TERM_IN_FIELD),
                 ("type",    port.type,         FUNC_TERM_IN_FIELD),
                 ("allowed", port.allowedVlans, FUNC_TERM_IN_FIELD),
+                ("stp",     port.stpGuard,     FUNC_TERM_IN_FIELD),
+                ("rstp",    port.portId,       FUNC_TERM_IN_FIELD),
             ]
             if should_show(terms, lookups):
                 keep_port = True
@@ -102,6 +165,8 @@ def switch_port_filter(query: str, ports: List[Switch.SwitchPort]) -> List[Switc
             ("voice",   port.voiceVlan,    FUNC_TERM_EQUAL_TO_FIELD),
             ("poe",     port.poeEnabled,   FUNC_TERM_IN_FIELD),
             ("id",      port.portId,       FUNC_TERM_EQUAL_TO_FIELD),
+            ("stp",     port.stpGuard,     FUNC_TERM_IN_FIELD),
+            ("rstp",    port.portId,       FUNC_TERM_IN_FIELD),
         ]
 
         if should_show(terms, lookups):
@@ -110,7 +175,7 @@ def switch_port_filter(query: str, ports: List[Switch.SwitchPort]) -> List[Switc
     return to_keep
 
 
-def appliance_filter(query, appliances: List[Appliance]) -> List[Appliance]:
+def appliance_filter(query, appliances: List[MerakiDevice]) -> List[MerakiDevice]:
     """This filter is responsible for filtering switches. Return the switches
     you want to keep from the query string. This function is run whenever the
     query string updates (not every frame) so we can get away with an expensive
@@ -135,24 +200,7 @@ def appliance_filter(query, appliances: List[Appliance]) -> List[Appliance]:
     return to_keep
 
 
-def pygui_copy_disabled(text: str, id: str, remember_dict: dict, text_to_copy=None, reset_time=120):
-    to_copy = str(text_to_copy or text)
-
-    if id not in remember_dict:
-        remember_dict[id] = 0
-    else:
-        remember_dict[id] -= 1
-
-    if remember_dict[id] > 0:
-        pygui.button("Copied###{}".format(id))
-    elif pygui.button("Copy###{}".format(id)):
-        remember_dict[id] = reset_time
-        pyperclip.copy(to_copy)
-    pygui.same_line()
-    pygui.text_disabled(text)
-
-
-class Appliance:
+class MerakiDevice:
     def __init__(self, device: dict, mki):
         self._raw = device
         device = RelaxedDictionary(device)
@@ -169,21 +217,19 @@ class Appliance:
         self.tags = device.get("tags", default=[])
         self.wan1_ip = device.get("wan1Ip")
         self.wan2_ip = device.get("wan2Ip")
+        self.lan_ip = device.get("lanIp")
         self.configuration_updated_at = device.get("configurationUpdatedAt")
         self.firmware = device.get("firmware")
         self.url = device.get("url")
         self.details = device.get("details", default=[])
 
-        self.copy_dict = {}
-        
         self.lldp: List[RelaxedDictionary] = []
         self.p_lldp = Future(
             meraki_util.get_device_lldp_cdp,
                 [mki, self.serial],
                 {},
-            Cache("run_cache/appliance {} {}.json".format(self.name or self.mac, self.serial)),
+            Cache("run_cache/appliance {} {}.json".format(self.name or self.mac.replace(":", ""), self.serial)),
             "appliance {}.json".format(self.serial),
-            callback=self.lldp_callback
         )
         self.lldp_callback()
 
@@ -204,20 +250,25 @@ class Appliance:
                     break
             
             port_iden = port_name[:i]
-            port_id = int(port_name[i:])
+            port_iden = port_iden if len(port_iden) > 0 else "Port"
+            port_id = int(port_name[i:]) if port_name[i:].isnumeric() else port_name[i:]
             self.lldp.append(RelaxedDictionary(port | {
                 "port_iden": port_iden,
                 "port_id": port_id,
             }))
         
-        self.lldp.sort(key=lambda x: (x.get("port_iden"), x.get("port_id")))
+        self.lldp.sort(key=lambda x: (x.get("port_iden"), Sortable(x.get("port_id"))))
     
 
     def draw(self):
-        self.p_lldp.draw_refresh_button("Get MX LLDP")
+        self.p_lldp.draw_refresh_button(f"Get Device CP & LLDP", self.name or self.mac)
 
-        if not self.p_lldp.response_exists():
+        if not self.p_lldp.queried_at_least_once():
             self.p_lldp.begin_task()
+        
+        if self.p_lldp.is_response_new():
+            self.lldp_callback()
+            self.p_lldp.mark_response_used()
         
         pygui.text(self.name)
         pygui.same_line()
@@ -225,10 +276,24 @@ class Appliance:
         if pygui.is_item_hovered() and pygui.begin_tooltip():
             pygui.text(str(self))
             pygui.end_tooltip()
+        pygui.same_line()
+        pygui.text_disabled("CDP")
+        pygui.same_line()
+        if self.p_lldp.get_error_status() is not None:
+            pygui.text_colored((1, 0, 0, 1), "(?)")
+        else:
+            pygui.text_disabled("(?)")
+        if pygui.is_item_hovered() and pygui.begin_tooltip():
+            if self.p_lldp.response_exists():
+                txt = json.dumps(self.p_lldp.response(), indent=4)
+            else:
+                txt = self.p_lldp.get_error_status() or "[No data]"
+            pygui.text_unformatted(txt)
+            pygui.end_tooltip()
         pygui.separator()
         pygui.begin_group()
-        pygui_copy_disabled(self.serial, self.name + "serial", self.copy_dict)
-        pygui_copy_disabled(self.mac, self.name + "mac", self.copy_dict)
+        pygui_ext.text_copy(self.serial, self.name + "serial")
+        pygui_ext.text_copy(self.mac, self.name + "mac")
         pygui.end_group()
         
         pygui.same_line()
@@ -255,6 +320,16 @@ class Appliance:
             else:
                 pygui.text_colored((1, 0, 0, 1), "[inactive]")
         
+        if "lanIp" in self._raw:
+            pygui.text("LAN IP")
+            pygui.same_line()
+            if self.lan_ip is not None:
+                pygui.text_colored((0, 0.8, 0, 1), "[active] ")
+                pygui.same_line()
+                pygui.text(self.lan_ip)
+            else:
+                pygui.text_colored((0.8, 0, 0, 1), "[inactive]")
+        
         pygui.separator()
 
         if not self.p_lldp.response_exists():
@@ -273,7 +348,7 @@ class Appliance:
             elif port_iden == "lan":
                 port_colour = (0, 0, 1, 1)
             else:
-                port_colour = (0.4, 0.4, 0.4, 1)
+                port_colour = (1, 1, 1, 0.3)
 
             cx, cy = pygui.get_cursor_screen_pos()
             draw_list.add_rect(
@@ -281,26 +356,64 @@ class Appliance:
                 (cx + WIDTH, cy + HEIGHT),
                 pygui.color_convert_float4_to_u32(port_colour),
             )
+
             pygui.dummy((WIDTH, HEIGHT))
             if pygui.is_item_hovered() and pygui.begin_tooltip():
                 pygui.text(json.dumps(port.get_base(), indent=4))
                 pygui.end_tooltip()
             pygui.same_line()
 
+            # Device Recognition Bar
+            device_name = port.get("lldp", "systemName") or port.get("cdp", "deviceId") or "None"
+            port_id = port.get("port_id")
+            connected_port: str = port.get("lldp", "portId") or port.get("cdp", "portId")
+            device_id = port.get("cdp", "deviceId") or "None"
+            device_ip = port.get("cdp", "address") or port.get("lldp", "managementAddress")
+
+            device_bar = None
+            if "Meraki" in device_name:
+                device_bar = (0, 0.8, 0, 1)
+            elif connected_port.count("/") == 2:
+                device_bar = (1, 0.7, 0.1, 1)
+            elif device_name.startswith("SEP"):
+                device_bar = (0.8, 0.8, 0.8, 1)
+            else:
+                device_bar = (0.3, 0.3, 0.3, 1)
+            
+            cx, cy = pygui.get_cursor_screen_pos()
+            draw_list.add_rect_filled(
+                (cx, cy),
+                (cx + 5, cy + HEIGHT),
+                pygui.color_convert_float4_to_u32(device_bar)
+            )
+            pygui.dummy((5, HEIGHT))
+            pygui.same_line()
+            
             pygui.begin_group()
             pygui.text("({} {}) -> {} ({})".format(
                 port.get("port_iden"),
-                port.get("port_id"),
-                port.get("lldp", "systemName") or port.get("cdp", "deviceId"),
-                port.get("lldp", "portId") or port.get("cdp", "portId"),
+                port_id,
+                device_name,
+                connected_port,
             ))
-            device_id = port.get("cdp", "deviceId")
-            device_id_unique = "device {} {}".format(port.get("port_id"), device_id)
-            ip = port.get("cdp", "address") or port.get("lldp", "managementAddress")
-            ip_unique = "ip {} {}".format(port.get("port_id"), ip)
 
-            pygui_copy_disabled(f"mac: {device_id}", device_id_unique, self.copy_dict, text_to_copy=device_id)
-            pygui_copy_disabled(f"ip: {ip}", ip_unique, self.copy_dict, text_to_copy=ip)
+            pygui.same_line()
+            pygui.text_disabled("(?)")
+            if pygui.is_item_hovered() and pygui.begin_tooltip():
+                pygui.text(json.dumps(port.get_base(), indent=4))
+                pygui.end_tooltip()
+
+            device_id_unique = f"device {port_id} {device_id} {self.model}"
+            device_ip_unique = f"ip {port_id} {device_ip} {self.model}"
+            device_name_unique = f"name {port_id} {device_name} {connected_port} {self.model}"
+
+            pygui.begin_group()
+            pygui_ext.text_copy(f"mac: {device_id}", device_id_unique, text_to_copy=device_id)
+            pygui_ext.text_copy(f"ip: {device_ip}", device_ip_unique,  text_to_copy=device_ip)
+            pygui.end_group()
+            pygui.same_line()
+            pygui_ext.text_copy(f"device: {device_name}", device_name_unique, text_to_copy=device_name)
+
             pygui.end_group()
         
         
@@ -337,7 +450,7 @@ class PortProfile:
         for field, is_selected in self.included_fields.items():
             pygui.checkbox(f"{field}: {self.port.get_json()[field]} ##{hash(self)}", is_selected)
         pygui.end_group()
-    
+
 
 class Switch:
     class SwitchPort:
@@ -388,6 +501,8 @@ class Switch:
                 self.voiceVlan or 0,
                 str(self.allowedVlans) or "",
                 self.poeEnabled,
+                self.stpGuard,
+                self.rstpEnabled,
             ][idx]
             return field
         
@@ -520,7 +635,6 @@ class Switch:
                     self.bot_line.append((running_port_idx, bot))
                     running_port_idx += 1
     
-
     def draw(self):
         """Draw the switch and its ports."""
         PORT_HEIGHT = 40
@@ -607,7 +721,7 @@ class Cache:
     def set(self, keys, set_key, value):
         self._lock.acquire()
         self._cache.set(keys, set_key, value)
-        with open(self.file_path, "w") as f:
+        with safe_open_w(self.file_path) as f:
             json.dump(self._cache.get_base(), f, indent=4)
         self._lock.release()
 
@@ -627,25 +741,26 @@ class Future:
             kwargs: Dict[str, Any],
             cache: Cache,
             lookup: str,
-            callback: Callable=None,
             default_on_fail: Any=None,
         ):
         self._request: Callable = request
         self._request_args = args
         self._request_kwargs = kwargs
+        self._error_status = None
         self._lookup = lookup
         self._response = cache.get(lookup, "response")
         self._time = cache.get(lookup, "time")
         self._refreshing = False
         self._cache = cache
-        self._callback = callback
         self._default_on_fail = default_on_fail
+        self._response_dirty = False
+        self._queried_at_least_once = self._response is not None
 
-    def draw_refresh_button(self, label: str):
-        label = "{}".format(label, self._lookup)
+    def draw_refresh_button(self, label: str, unique_id: str=None):
+        unique_id = unique_id or label
         if self._refreshing:
-            pygui.button(label + " " + "/-\|"[(pygui.get_frame_count() // 60) % 4])
-        elif pygui.button(label):
+            pygui.button(label + " " + "/-\|"[(pygui.get_frame_count() // 60) % 4] + "###" + unique_id)
+        elif pygui.button(label + "###" + unique_id):
             self.begin_task()
         
         pygui.same_line()
@@ -655,18 +770,31 @@ class Future:
         else:
             pygui.text("Last refreshed: Never")
 
+    def is_response_new(self):
+        return self._response_dirty
+
+    def mark_response_used(self):
+        self._response_dirty = False
+
     def response_exists(self):
         return self._response is not None
+
+    def queried_at_least_once(self):
+        return self._queried_at_least_once
 
     def response(self):
         return self._response
     
+    def get_error_status(self):
+        return self._error_status
+
     def get_last_updated(self):
         return self._time
 
     def _task(self):
         try:
             self._response = self._request(*self._request_args, **self._request_kwargs)
+            self._error_status = None
             self._time = time.time()
             self._cache.set([self._lookup], "response", self._response)
             self._cache.set([self._lookup], "time", self._time)
@@ -674,21 +802,22 @@ class Future:
             if self._default_on_fail is not None:
                 self._response = self._default_on_fail
             else:
+                self._error_status = traceback.format_exc()
                 raise e
         finally:
             self._refreshing = False
-            if self._callback is not None:
-                self._callback()
+            self._response_dirty = True
     
     def begin_task(self):
         if self._refreshing:
             return
+        self._queried_at_least_once = True
         self._refreshing = True
         self.t = Thread(target=self._task)
         self.t.start()
 
 
-class BackupApp:
+class MerakiApp:
     def __init__(self):
         with open("meraki_api_key_jaedan.txt") as f:
             self.mki_dashboard = meraki_util.init(f.read())
@@ -707,7 +836,6 @@ class BackupApp:
                 {},
             self.query_cache,
             "get_organization_networks",
-            self.switch_callback
         )
         self.p_organization_switches = Future(
             meraki_util.get_organization_switch_ports_by_switch,
@@ -715,8 +843,8 @@ class BackupApp:
                 {},
             self.query_cache,
             "get_organization_switch_ports_by_switch",
-            self.switch_callback
         )
+        self.port_profiles = []
 
         self.networks = []
         self.switches: List[Switch] = []
@@ -739,7 +867,7 @@ class BackupApp:
             switch = RelaxedDictionary(switch)
             self.switches.append(Switch(switch))
             network_set.add(switch.get("network", "id"))
-        
+
         self.networks = [RelaxedDictionary(n) for n in self.p_organization_networks.response() if n["id"] in network_set]
         self.switches_filtered = None
 
@@ -752,6 +880,14 @@ class BackupApp:
         if not self.p_organization_networks.response_exists() \
             or not self.p_organization_switches.response_exists():
             return
+
+        if self.p_organization_networks.is_response_new():
+            self.switch_callback()
+            self.p_organization_networks.mark_response_used()
+        
+        if self.p_organization_switches.is_response_new():
+            self.switch_callback()
+            self.p_organization_switches.mark_response_used()
         
         if pygui.input_text("Filter", self.switch_search) or self.switches_filtered is None:
             self.switches_filtered = switch_filter(self.switch_search.value, self.switches)
@@ -795,7 +931,7 @@ class BackupApp:
             pygui.TABLE_FLAGS_NO_BORDERS_IN_BODY | \
             pygui.TABLE_FLAGS_SCROLL_Y
         
-        if pygui.begin_table("switchport_sorting", 9, table_flags):
+        if pygui.begin_table("switchport_sorting", 11, table_flags):
             pygui.table_setup_column("Preview",      pygui.TABLE_COLUMN_FLAGS_NO_SORT)
             pygui.table_setup_column("Switch",       pygui.TABLE_COLUMN_FLAGS_DEFAULT_SORT | pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
             pygui.table_setup_column("Port Id",      pygui.TABLE_COLUMN_FLAGS_DEFAULT_SORT | pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
@@ -805,34 +941,12 @@ class BackupApp:
             pygui.table_setup_column("Voice VLAN",   pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
             pygui.table_setup_column("Allowed VLAN", pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
             pygui.table_setup_column("POE",          pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
+            pygui.table_setup_column("STP Guard",    pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
+            pygui.table_setup_column("RSTP Enabled", pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
             pygui.table_setup_scroll_freeze(0, 1) # Make row always visible
             pygui.table_headers_row()
 
             def custom_key(port: Switch.SwitchPort):
-                class Sortable:
-                    def __init__(self, obj):
-                        self.obj = obj
-
-                    def __eq__(self, other):
-                        return str(other.obj) == str(self.obj)
-
-                    def __lt__(self, other):
-                        if type(self.obj) != type(other.obj):
-                            return str(other.obj) > str(self.obj)
-                        return other.obj > self.obj
-                
-                # From: https://stackoverflow.com/a/75123782
-                class SortableNegative:
-                    def __init__(self, obj):
-                        self.obj = obj
-
-                    def __eq__(self, other):
-                        return str(other.obj) == str(self.obj)
-
-                    def __lt__(self, other):
-                        if type(self.obj) != type(other.obj):
-                            return str(other.obj) < str(self.obj)
-                        return other.obj < self.obj
 
                 sort_specs = pygui.table_get_sort_specs()
                 sort_with = []
@@ -891,6 +1005,10 @@ class BackupApp:
                     pygui.text(str(port.allowedVlans))
                     pygui.table_next_column()
                     pygui.text(str(port.poeEnabled))
+                    pygui.table_next_column()
+                    pygui.text(str(port.stpGuard))
+                    pygui.table_next_column()
+                    pygui.text(str(port.rstpEnabled))
                     pygui.pop_id()
             clipper.destroy()
 
@@ -920,14 +1038,13 @@ class BackupApp:
         self.p_organization_appliances = Future(
             meraki_util.get_organization_devices,
                 [self.mki_dashboard, self.hammondcare_org_id],
-                {"productTypes": ["appliance"]},
+                {"productTypes": ["appliance", "switch"]},
             self.query_cache,
             "get_organization_appliances",
-            self.appliance_callback
         )
 
-        self.appliances: List[Appliance] = []
-        self.appliances_filtered: List[Appliance] = []
+        self.appliances: List[MerakiDevice] = []
+        self.appliances_filtered: List[MerakiDevice] = []
         self.appliance_search = pygui.String("")
         self.appliance_callback()
 
@@ -938,7 +1055,7 @@ class BackupApp:
         
         self.appliances.clear()
         for appliance in self.p_organization_appliances.response():
-            self.appliances.append(Appliance(appliance, self.mki_dashboard))
+            self.appliances.append(MerakiDevice(appliance, self.mki_dashboard))
         self.appliances.sort(key=lambda x: (x.name, x.mac))
 
         self.appliances_filtered = None
@@ -949,6 +1066,10 @@ class BackupApp:
 
         if not self.p_organization_appliances.response_exists():
             return
+        
+        if self.p_organization_appliances.is_response_new():
+            self.appliance_callback()
+            self.p_organization_appliances.mark_response_used()
 
         if pygui.input_text("Filter", self.appliance_search) or self.appliances_filtered is None:
             self.appliances_filtered = appliance_filter(self.appliance_search.value, self.appliances)
@@ -959,7 +1080,7 @@ class BackupApp:
         
 
     def draw(self):
-        pygui.begin("Meraki Backup")
+        pygui.begin("Switches")
         self.switch_draw()
         pygui.end()
         pygui.begin("Switch Ports")
