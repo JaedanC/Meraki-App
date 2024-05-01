@@ -2,6 +2,7 @@ __pycache__
 cache
 dist
 logs
+pygui
 run_cache
 venv
 
