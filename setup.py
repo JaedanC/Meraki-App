@@ -3,6 +3,18 @@ from py2exe import freeze
 from typing import List, Tuple
 
 
+# Make sure to include the following in app.py for pygui projects:
+"""
+# This is required for py2exe
+# Reference: https://www.py2exe.org/index.cgi/PyOpenGL
+from ctypes import util
+try:
+    from OpenGL.platform import win32
+except AttributeError:
+    pass
+"""
+
+
 def collect_files(root_folder) -> List[Tuple[str, List[str]]]:
     """Returns the files in the root_folder recursively in the freeze format.
     Format:
@@ -44,13 +56,31 @@ def collect_files(root_folder) -> List[Tuple[str, List[str]]]:
     return freeze_format
 
 
+def filter_missing_files(files_structure: List[Tuple[str, List[str]]]):
+    keep_structure = []
+    for dest, files in files_structure:
+        keep_files = []
+        for file in files:
+            if not os.path.exists(file):
+                continue
+
+            keep_files.append(file)
+        
+        if len(keep_files) == 0:
+            continue
+
+        keep_structure.append((dest, keep_files))
+    return keep_structure
+
+
 # Make sure to recursively include pygui
 additional_files = collect_files("pygui")
 
 # --- Include any other files that need to be copied here ---
-additional_files.append((".", ["./meraki_api_key_jaedan.txt"]))
+additional_files.append((".", ["./meraki_api_key.txt"]))
 
 
+additional_files = filter_missing_files(additional_files)
 for destination_folder, src_files in additional_files:
     for src_file in src_files:
         print("Copying to {} \t->\t {}".format(destination_folder, src_file))

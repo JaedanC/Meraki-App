@@ -10,7 +10,7 @@ from typing import Callable, List, Any, Tuple, Dict
 
 import meraki_util
 import pygui
-from api import RelaxedDictionary, safe_open_w
+from extra.api import RelaxedDictionary, safe_open_w
 
 from . import switch_profiles
 from . import pygui_ext
@@ -228,7 +228,7 @@ class MerakiDevice:
             meraki_util.get_device_lldp_cdp,
                 [mki, self.serial],
                 {},
-            Cache("run_cache/appliance {} {}.json".format(self.name or self.mac.replace(":", ""), self.serial)),
+            Cache("pygui_cache/appliance {} {}.json".format(self.name or self.mac.replace(":", ""), self.serial)),
             "appliance {}.json".format(self.serial),
         )
         self.lldp_callback()
@@ -366,7 +366,7 @@ class MerakiDevice:
             # Device Recognition Bar
             device_name = port.get("lldp", "systemName") or port.get("cdp", "deviceId") or "None"
             port_id = port.get("port_id")
-            connected_port: str = port.get("lldp", "portId") or port.get("cdp", "portId")
+            connected_port: str = port.get("lldp", "portId") or port.get("cdp", "portId") or "None"
             device_id = port.get("cdp", "deviceId") or "None"
             device_ip = port.get("cdp", "address") or port.get("lldp", "managementAddress")
 
@@ -644,13 +644,19 @@ class Switch:
         GAP_WIDTH = 5
 
         def _show_port_text(port_text: str, width: float):
+            port_text = port_text[-6:]
             port_text_len = pygui.calc_text_size(port_text)[0]
             pygui.set_cursor_pos_x(
                 pygui.get_cursor_pos_x() + width / 2 - port_text_len / 2)
             
-            pygui.push_style_color(pygui.COL_TEXT, pygui.color_convert_float4_to_u32((0.4, 0.4, 0.4, 1)))
-            pygui.text(port_text)
-            pygui.pop_style_color()
+            d = pygui.get_window_draw_list()
+            d.add_text(
+                pygui.get_cursor_screen_pos(),
+                pygui.color_convert_float4_to_u32((0.4, 0.4, 0.4, 1)), 
+                port_text
+            )
+            pygui.dummy((1, pygui.get_text_line_height_with_spacing()))
+            # pygui.text(port_text)
         
         for i, port_type in enumerate(self.top_line + self.bot_line):
             is_first_line = i < len(self.top_line)
@@ -673,6 +679,14 @@ class Switch:
 
             if port_type == switch_profiles.p.RJ45_Gap:
                 pygui.dummy((RJ45_WIDTH, PORT_HEIGHT))
+                continue
+
+            if port_type == switch_profiles.p.SFP_Gap:
+                pygui.dummy((SFP_WIDTH, PORT_HEIGHT))
+                continue
+
+            if port_type == switch_profiles.p.STACK_Gap:
+                pygui.dummy((STACK_WIDTH, PORT_HEIGHT))
                 continue
             
             # Draw the port
@@ -818,12 +832,11 @@ class Future:
 
 
 class MerakiApp:
-    def __init__(self):
-        with open("meraki_api_key_jaedan.txt") as f:
-            self.mki_dashboard = meraki_util.init(f.read())
+    def __init__(self, meraki_api_key: str):
+        self.mki_dashboard = meraki_util.init(meraki_api_key)
 
         self.hammondcare_org_id = "34581"
-        self.query_cache = Cache("run_cache/query_cache.json")
+        self.query_cache = Cache("pygui_cache/query_cache.json")
 
         self.__init_switch()
         self.__init_appliance()
@@ -919,6 +932,8 @@ class MerakiApp:
         
         if pygui.input_text("Filter Ports", self.switch_port_search) or self.switches_filtered_ports_filtered is None:
             self.switches_filtered_ports_filtered = switch_port_filter(self.switch_port_search.value, self.switches_filtered_ports)
+
+        pygui.text("Showing {} ports".format(len(self.switches_filtered_ports_filtered)))
 
         table_flags = pygui.TABLE_FLAGS_RESIZABLE | \
             pygui.TABLE_FLAGS_REORDERABLE | \

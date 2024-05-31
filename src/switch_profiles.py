@@ -5,7 +5,9 @@ class p(Enum):
     RJ45_Gap = 1
     RJ45 = 2
     SFP = 3
-    STACK = 4
+    SFP_Gap = 4
+    STACK = 5
+    STACK_Gap = 6
 
 
 _default_8 = [
@@ -21,6 +23,10 @@ _default_48 = [
 ]
 
 switch_lookup = {
+    "C9300-48UXM": [
+        24*[p.RJ45] + [p.Gap] + 2*[p.STACK_Gap]                       + [p.Gap] + 4*[p.SFP_Gap]                       + [p.Gap] + [(i + 54, p.SFP) for i in range(0, 8, 2)] + [p.Gap] + 2*[p.SFP_Gap]                       + [p.Gap] + [(i + 64, p.SFP) for i in range(0, 34, 2)],
+        24*[p.RJ45] + [p.Gap] + [(i + 48, p.STACK) for i in range(2)] + [p.Gap] + [(i + 50, p.SFP) for i in range(4)] + [p.Gap] + [(i + 55, p.SFP) for i in range(0, 8, 2)] + [p.Gap] + [(i + 62, p.SFP) for i in range(2)] + [p.Gap] + [(i + 65, p.SFP) for i in range(0, 34, 2)],
+    ],
     "C9200L-24P-4X": _default_24, # Testing that this works
     "C9200L-48P-4X": _default_48,
     "C9300-48P": [

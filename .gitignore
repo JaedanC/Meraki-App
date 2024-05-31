@@ -3,9 +3,9 @@ cache
 dist
 logs
 pygui
-run_cache
+pygui_cache
 venv
 
 imgui.ini
 
-*api_key*
+meraki_api_key.txt
