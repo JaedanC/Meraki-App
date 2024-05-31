@@ -1,33 +1,40 @@
 # Meraki App
 
-## Running
+## Installing
 
-Optional, use python virtual env.
+Download this repository with:
+
+```bash
+git clone https://github.com/JaedanC/Meraki-App.git --recursive
+```
+
+Install pygui. Download the latest release from [https://github.com/JaedanC/pygui/releases](JaedanC/pygui) and extract:
+
+- 📁 `pygui`
+- 📃 `pygui_demo.py`
+
+Then run
 
 ```bash
 python -m venv venv
-./venv/Scripts/activate
+./venv/scripts/activate
+pip install -r requirements.txt
 ```
 
-Install dependencies
+## Running
+
+You must supply a Meraki API Key with `-k` or `-kf`.
+
+Example:
 
 ```bash
-pip install -r requirements
+./venv/scripts/activate
+python app.py -kf meraki_api_key.txt
 ```
 
-Run `app.py`
+## Creating an exe
 
-```bash
-python app.py
-```
-
-## Compiling to exe
-
-```bash
-python setup.py
-```
-
-Compiles to `dist`
+To compile this tool into an exe, run `setup.py`. The resulting .exe will be inside the `dist` directory.
 
 ## Interesting Filters
 
