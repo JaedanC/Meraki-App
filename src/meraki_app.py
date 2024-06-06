@@ -42,13 +42,6 @@ class SortableNegative:
         return other.obj < self.obj
 
 
-def FUNC_TERM_IN_FIELD(query: str, data_value: str):
-    query = query.replace("_", " ")
-    return query in data_value
-
-FUNC_TERM_EQUAL_TO_FIELD = lambda query, data_value: query == data_value
-
-
 def get_query_terms(
         query: str,
         default="name"
@@ -108,6 +101,13 @@ def should_show(
 
             return False
     return True
+
+
+def FUNC_TERM_IN_FIELD(query: str, data_value: str):
+    query = query.replace("_", " ")
+    return query in data_value
+
+FUNC_TERM_EQUAL_TO_FIELD = lambda query, data_value: query == data_value
 
 
 def switch_filter(query: str, switches: List[Switch]) -> List[Switch]:
@@ -226,8 +226,10 @@ class MerakiDevice:
         self.lldp: List[RelaxedDictionary] = []
         self.p_lldp = Future(
             meraki_util.get_device_lldp_cdp,
-                [mki, self.serial],
-                {},
+                [],
+                {
+                    "serial": self.serial
+                },
             Cache("pygui_cache/appliance {} {}.json".format(self.name or self.mac.replace(":", ""), self.serial)),
             "appliance {}.json".format(self.serial),
         )
@@ -261,10 +263,10 @@ class MerakiDevice:
     
 
     def draw(self):
-        self.p_lldp.draw_refresh_button(f"Get Device CP & LLDP", self.name or self.mac)
+        self.p_lldp.draw_refresh_button(f"Get Device CP & LLDP", self.name or self.mac, dashboard=MerakiApp.mki_dashboard)
 
         if not self.p_lldp.queried_at_least_once():
-            self.p_lldp.begin_task()
+            self.p_lldp.begin_task(dashboard=MerakiApp.mki_dashboard)
         
         if self.p_lldp.is_response_new():
             self.lldp_callback()
@@ -770,12 +772,12 @@ class Future:
         self._response_dirty = False
         self._queried_at_least_once = self._response is not None
 
-    def draw_refresh_button(self, label: str, unique_id: str=None):
+    def draw_refresh_button(self, label: str, unique_id: str=None, **kwargs):
         unique_id = unique_id or label
         if self._refreshing:
             pygui.button(label + " " + "/-\|"[(pygui.get_frame_count() // 60) % 4] + "###" + unique_id)
         elif pygui.button(label + "###" + unique_id):
-            self.begin_task()
+            self.begin_task(**kwargs)
         
         pygui.same_line()
         if self._time is not None:
@@ -805,9 +807,12 @@ class Future:
     def get_last_updated(self):
         return self._time
 
-    def _task(self):
+    def _task(self, *args, **kwargs):
         try:
-            self._response = self._request(*self._request_args, **self._request_kwargs)
+            self._response = self._request(
+                *(list(self._request_args) + list(args)),
+                **(self._request_kwargs | kwargs)
+            )
             self._error_status = None
             self._time = time.time()
             self._cache.set([self._lookup], "response", self._response)
@@ -822,49 +827,51 @@ class Future:
             self._refreshing = False
             self._response_dirty = True
     
-    def begin_task(self):
+    def begin_task(self, *args, **kwargs):
         if self._refreshing:
             return
         self._queried_at_least_once = True
         self._refreshing = True
-        self.t = Thread(target=self._task)
+        self.t = Thread(target=self._task, args=args, kwargs=kwargs)
         self.t.start()
 
 
 class MerakiApp:
+    @classmethod
+    def set_meraki_api_key(cls, meraki_api_key: str):
+        cls.meraki_api_key = pygui.String(meraki_api_key or "")
+        cls.mki_dashboard = meraki_util.init(meraki_api_key or "Placeholder")
+
+
     def __init__(self, meraki_api_key: Optional[str]):
         self.hammondcare_org_id = "34581"
         self.query_cache = Cache("pygui_cache/query_cache.json")
 
-        self.set_meraki_api_key(meraki_api_key)
+        MerakiApp.set_meraki_api_key(meraki_api_key)
+
         self.__init_switch()
         self.__init_appliance()
 
-    def set_meraki_api_key(self, meraki_api_key: Optional[str]):
-        self.meraki_api_key = pygui.String(meraki_api_key or "")
-        self.mki_dashboard = meraki_util.init(meraki_api_key or "Placeholder")
-        self.__update_mki_callbacks()
-    
 
-    def __update_mki_callbacks(self):
+    def __init_switch(self):
         self.p_organization_networks = Future(
             meraki_util.get_organization_networks,
-                [self.mki_dashboard, self.hammondcare_org_id],
-                {},
+                [],
+                {
+                    "organization_id": self.hammondcare_org_id
+                },
             self.query_cache,
             "get_organization_networks",
         )
         self.p_organization_switches = Future(
             meraki_util.get_organization_switch_ports_by_switch,
-                [self.mki_dashboard, self.hammondcare_org_id],
-                {},
+                [],
+                {
+                    "organization_id": self.hammondcare_org_id
+                },
             self.query_cache,
             "get_organization_switch_ports_by_switch",
         )
-
-
-    def __init_switch(self):
-        self.__update_mki_callbacks()
         self.port_profiles = []
 
         self.networks = []
@@ -902,14 +909,14 @@ class MerakiApp:
                 input_flags = pygui.INPUT_TEXT_FLAGS_PASSWORD
                 
             pygui.same_line()
-            pygui.input_text("Meraki API key", self.meraki_api_key, input_flags)
+            pygui.input_text("Meraki API key", MerakiApp.meraki_api_key, input_flags)
             if pygui.is_item_deactivated_after_edit():
-                self.set_meraki_api_key(self.meraki_api_key.value)
-                print("Set to", self.meraki_api_key.value)
+                self.set_meraki_api_key(MerakiApp.meraki_api_key.value)
+                print("Set to", MerakiApp.meraki_api_key.value)
             pygui.tree_pop()
 
-        self.p_organization_switches.draw_refresh_button("Get Organisation Switch Ports")
-        self.p_organization_networks.draw_refresh_button("Get Organisation Networks")
+        self.p_organization_switches.draw_refresh_button("Get Organisation Switch Ports", dashboard=MerakiApp.mki_dashboard)
+        self.p_organization_networks.draw_refresh_button("Get Organisation Networks",     dashboard=MerakiApp.mki_dashboard)
 
         if not self.p_organization_networks.response_exists() \
             or not self.p_organization_switches.response_exists():
@@ -1073,8 +1080,11 @@ class MerakiApp:
     def __init_appliance(self):
         self.p_organization_appliances = Future(
             meraki_util.get_organization_devices,
-                [self.mki_dashboard, self.hammondcare_org_id],
-                {"productTypes": ["appliance", "switch"]},
+                [],
+                {
+                    "organization_id": self.hammondcare_org_id,
+                    "productTypes": ["appliance", "switch"]
+                },
             self.query_cache,
             "get_organization_appliances",
         )
@@ -1098,7 +1108,7 @@ class MerakiApp:
 
 
     def appliance_lldp_draw(self):
-        self.p_organization_appliances.draw_refresh_button("Get Organisation Appliances")
+        self.p_organization_appliances.draw_refresh_button("Get Organisation Appliances", dashboard=MerakiApp.mki_dashboard)
 
         if not self.p_organization_appliances.response_exists():
             return
