@@ -6,7 +6,7 @@ import random
 import time
 import traceback
 from threading import Thread, Lock
-from typing import Callable, List, Any, Tuple, Dict
+from typing import Callable, List, Any, Tuple, Dict, Optional
 
 import meraki_util
 import pygui
@@ -832,17 +832,21 @@ class Future:
 
 
 class MerakiApp:
-    def __init__(self, meraki_api_key: str):
-        self.mki_dashboard = meraki_util.init(meraki_api_key)
-
+    def __init__(self, meraki_api_key: Optional[str]):
         self.hammondcare_org_id = "34581"
         self.query_cache = Cache("pygui_cache/query_cache.json")
 
+        self.set_meraki_api_key(meraki_api_key)
         self.__init_switch()
         self.__init_appliance()
 
+    def set_meraki_api_key(self, meraki_api_key: Optional[str]):
+        self.meraki_api_key = pygui.String(meraki_api_key or "")
+        self.mki_dashboard = meraki_util.init(meraki_api_key or "Placeholder")
+        self.__update_mki_callbacks()
+    
 
-    def __init_switch(self):
+    def __update_mki_callbacks(self):
         self.p_organization_networks = Future(
             meraki_util.get_organization_networks,
                 [self.mki_dashboard, self.hammondcare_org_id],
@@ -857,6 +861,10 @@ class MerakiApp:
             self.query_cache,
             "get_organization_switch_ports_by_switch",
         )
+
+
+    def __init_switch(self):
+        self.__update_mki_callbacks()
         self.port_profiles = []
 
         self.networks = []
@@ -887,6 +895,19 @@ class MerakiApp:
 
     def switch_draw(self):
         pygui.text("FPS: {:.1f}".format(pygui.get_io().framerate))
+        if pygui.tree_node("API Key"):
+            if pygui.button("Show") or pygui.is_item_active():
+                input_flags = pygui.INPUT_TEXT_FLAGS_NONE
+            else:
+                input_flags = pygui.INPUT_TEXT_FLAGS_PASSWORD
+                
+            pygui.same_line()
+            pygui.input_text("Meraki API key", self.meraki_api_key, input_flags)
+            if pygui.is_item_deactivated_after_edit():
+                self.set_meraki_api_key(self.meraki_api_key.value)
+                print("Set to", self.meraki_api_key.value)
+            pygui.tree_pop()
+
         self.p_organization_switches.draw_refresh_button("Get Organisation Switch Ports")
         self.p_organization_networks.draw_refresh_button("Get Organisation Networks")
 

@@ -8,7 +8,7 @@ def main():
         prog="python " + sys.argv[0],
         description="Interactive Meraki API App"
     )
-    meraki_key_or_file = parser.add_mutually_exclusive_group(required=True)
+    meraki_key_or_file = parser.add_mutually_exclusive_group(required=False)
     meraki_key_or_file.add_argument(
         "-k",
         action="store",

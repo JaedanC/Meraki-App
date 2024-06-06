@@ -23,7 +23,7 @@ pip install -r requirements.txt
 
 ## Running
 
-You must supply a Meraki API Key with `-k` or `-kf`.
+You can supply an optional Meraki API Key with `-k` or `-kf`.
 
 Example:
 
