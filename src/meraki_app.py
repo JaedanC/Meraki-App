@@ -8,7 +8,7 @@ import traceback
 from threading import Thread, Lock
 from typing import Callable, List, Any, Tuple, Dict, Optional
 
-import meraki_util
+import extra.meraki_util
 import pygui
 from extra.api import RelaxedDictionary, safe_open_w
 
@@ -225,7 +225,7 @@ class MerakiDevice:
 
         self.lldp: List[RelaxedDictionary] = []
         self.p_lldp = Future(
-            meraki_util.get_device_lldp_cdp,
+            extra.meraki_util.get_device_lldp_cdp,
                 [],
                 {
                     "serial": self.serial
@@ -840,7 +840,7 @@ class MerakiApp:
     @classmethod
     def set_meraki_api_key(cls, meraki_api_key: str):
         cls.meraki_api_key = pygui.String(meraki_api_key or "")
-        cls.mki_dashboard = meraki_util.init(meraki_api_key or "Placeholder")
+        cls.mki_dashboard = extra.meraki_util.init(meraki_api_key or "Placeholder")
 
 
     def __init__(self, meraki_api_key: Optional[str]):
@@ -855,7 +855,7 @@ class MerakiApp:
 
     def __init_switch(self):
         self.p_organization_networks = Future(
-            meraki_util.get_organization_networks,
+            extra.meraki_util.get_organization_networks,
                 [],
                 {
                     "organization_id": self.hammondcare_org_id
@@ -864,7 +864,7 @@ class MerakiApp:
             "get_organization_networks",
         )
         self.p_organization_switches = Future(
-            meraki_util.get_organization_switch_ports_by_switch,
+            extra.meraki_util.get_organization_switch_ports_by_switch,
                 [],
                 {
                     "organization_id": self.hammondcare_org_id
@@ -1079,7 +1079,7 @@ class MerakiApp:
 
     def __init_appliance(self):
         self.p_organization_appliances = Future(
-            meraki_util.get_organization_devices,
+            extra.meraki_util.get_organization_devices,
                 [],
                 {
                     "organization_id": self.hammondcare_org_id,
