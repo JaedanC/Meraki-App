@@ -94,6 +94,7 @@ freeze(
     }],
     data_files=additional_files,
     options={
-        "bundle_files": 1
+        # Fixes: https://github.com/jawah/charset_normalizer/issues/253
+        "includes": ["charset_normalizer.md__mypyc"],
     }
 )
