@@ -2,6 +2,8 @@ import pygui
 import glfw
 import OpenGL.GL as gl
 from pygui_demo import demo_fonts_init, pygui_demo_window
+
+from src.cache import Cache
 from src.meraki_app import MerakiApp
 
 from ctypes import util
@@ -27,7 +29,9 @@ def render(meraki_app: MerakiApp):
 
 
 def main(meraki_key: str):
-    backup_app = MerakiApp(meraki_key)
+    organisation_id = "34581"
+    cache = Cache("pygui_cache/query_cache.json")
+    backup_app = MerakiApp(meraki_key, organisation_id, cache)
 
     if not glfw.init():
         return
@@ -38,7 +42,7 @@ def main(meraki_key: str):
     glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 2)
     glfw.window_hint(glfw.RESIZABLE, glfw.TRUE)
 
-    window = glfw.create_window(600, 400, "Meraki App", None, None)
+    window = glfw.create_window(1600, 900, "Meraki App", None, None)
     if window is None:
        print("Failed to create window! Terminating")
        glfw.terminate()
