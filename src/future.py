@@ -80,6 +80,7 @@ class Future:
             if self._default_on_fail is not None:
                 self._response = self._default_on_fail
             else:
+                self._response = None
                 self._error_status = traceback.format_exc()
                 raise e
         finally:

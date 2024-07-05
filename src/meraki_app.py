@@ -179,7 +179,6 @@ class MerakiApp:
             pygui.table_headers_row()
 
             def custom_key(port: Switch.SwitchPort):
-
                 sort_specs = pygui.table_get_sort_specs()
                 sort_with = []
                 for sort_spec in sort_specs.specs:

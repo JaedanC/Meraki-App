@@ -241,7 +241,7 @@ class Switch:
             self.switch_name = switch_name
             self.portId = port.get("portId")
             self.name = port.get("name")
-            self.tags = port.get("tags")
+            self.tags = port.get("tags", [])
             self.enabled = port.get("enabled", False)
             self.poeEnabled = port.get("poeEnabled", False)
             self.type = port.get("type")

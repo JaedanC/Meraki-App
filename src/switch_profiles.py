@@ -50,6 +50,9 @@ switch_lookup = {
         24*[p.RJ45] + [p.Gap] + 2*[p.SFP],
         24*[p.RJ45] + [p.Gap] + 2*[p.SFP],
     ],
+    "MS130-8P": [
+        8*[p.RJ45] + 2*[p.SFP],
+    ],
     "MS130R-8P": [
         4*[p.RJ45] + [p.Gap] + [p.SFP],
         4*[p.RJ45] + [p.Gap] + [p.SFP],

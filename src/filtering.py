@@ -19,14 +19,15 @@ Valid switch filters:
  - site
 
 Valid switch/port filters:
- - allowed
- - id
- - poe
- - rstp
- - stp
+ - allowed & allowedVlans
+ - id      & portId
+ - poe     & poeEnabled
+ - rstp    & rstpEnabled
+ - stp     & stpGuard
  - type
  - vlan
- - voice
+ - voice   & voiceVlan
+ - tag     & tags
 
 E.g. My_switch vlan:100|200 poe:enabled model!MS250-24P
 """.strip()
@@ -41,17 +42,18 @@ Spaces are          _
 Chain queries with  |
 
 Valid switch port filters:
- - allowed
- - id
- - poe
- - rstp
- - stp
+ - allowed & allowedVlans
+ - id      & portId
+ - poe     & poeEnabled
+ - rstp    & rstpEnabled
+ - stp     & stpGuard
  - type
  - vlan
- - voice
+ - voice   & voiceVlan
  - name
  - switch
  - enabled
+ - tag     & tags
 
 
 E.g. Data/Voice vlan:100|200 poe:enabled
@@ -94,6 +96,13 @@ def IS_VLAN_ALLOWED(query: str, data_value: str) -> bool:
     
     vlans = data_value.split(",")
     return query in vlans
+
+
+def IS_TAG_ON_DEVICE(query: str, data_value_tags: List[str]) -> bool:
+    for tag in data_value_tags:
+        if query in tag:
+            return True
+    return False
 
 
 def tokenise_query_into_dict(
@@ -144,7 +153,10 @@ def should_show(
 
         query_values, true_is_pass = query_extract
 
-        field = str(field).lower()
+        if isinstance(field, list):
+            field = [str(f).lower() for f in field]
+        else:
+            field = str(field).lower()
         for query_value in query_values:
             func_result = func(query_value, field)
 
@@ -179,14 +191,20 @@ def switch_filter(query: str, switches: List[Switch]) -> List[Switch]:
         keep_port = False
         for port in switch.ports:
             lookups = [
-                ("allowed", port.allowedVlans, IS_VLAN_ALLOWED),
-                ("id",      port.portId,       IS_TERM_EQUAL_TO_FIELD),
-                ("poe",     port.poeEnabled,   IS_TERM_IN_FIELD),
-                ("rstp",    port.rstpEnabled,  IS_TERM_IN_FIELD),
-                ("stp",     port.stpGuard,     IS_TERM_IN_FIELD),
-                ("type",    port.type,         IS_TERM_IN_FIELD),
-                ("vlan",    port.vlan,         IS_TERM_EQUAL_TO_FIELD),
-                ("voice",   port.voiceVlan,    IS_TERM_EQUAL_TO_FIELD),
+                ("allowed",      port.allowedVlans, IS_VLAN_ALLOWED),
+                ("allowedVlans", port.allowedVlans, IS_VLAN_ALLOWED),
+                ("poe",          port.poeEnabled,   IS_TERM_IN_FIELD),
+                ("poeEnabled",   port.poeEnabled,   IS_TERM_IN_FIELD),
+                ("rstp",         port.rstpEnabled,  IS_TERM_IN_FIELD),
+                ("rstpEnabled",  port.rstpEnabled,  IS_TERM_IN_FIELD),
+                ("stp",          port.stpGuard,     IS_TERM_IN_FIELD),
+                ("stpGuard",     port.stpGuard,     IS_TERM_IN_FIELD),
+                ("type",         port.type,         IS_TERM_IN_FIELD),
+                ("vlan",         port.vlan,         IS_TERM_EQUAL_TO_FIELD),
+                ("voice",        port.voiceVlan,    IS_TERM_EQUAL_TO_FIELD),
+                ("voiceVlan",    port.vlan,         IS_TERM_EQUAL_TO_FIELD),
+                ("tag",          port.tags,         IS_TAG_ON_DEVICE),
+                ("tags",         port.tags,         IS_TAG_ON_DEVICE),
             ]
             if should_show(terms, lookups):
                 keep_port = True
@@ -204,17 +222,25 @@ def switch_port_filter(query: str, ports: List[Switch.SwitchPort]) -> List[Switc
 
     for port in ports:
         lookups = [
-            ("allowed", port.allowedVlans, IS_VLAN_ALLOWED),
-            ("id",      port.portId,       IS_TERM_EQUAL_TO_FIELD),
-            ("poe",     port.poeEnabled,   IS_TERM_IN_FIELD),
-            ("rstp",    port.rstpEnabled,  IS_TERM_IN_FIELD),
-            ("stp",     port.stpGuard,     IS_TERM_IN_FIELD),
-            ("type",    port.type,         IS_TERM_IN_FIELD),
-            ("vlan",    port.vlan,         IS_TERM_EQUAL_TO_FIELD),
-            ("voice",   port.voiceVlan,    IS_TERM_EQUAL_TO_FIELD),
-            ("name",    port.name,         IS_TERM_IN_FIELD),
-            ("switch",  port.switch_name,  IS_TERM_IN_FIELD),
-            ("enabled", port.enabled,      IS_TERM_IN_FIELD),
+            ("allowed",      port.allowedVlans, IS_VLAN_ALLOWED),
+            ("allowedVlans", port.allowedVlans, IS_VLAN_ALLOWED),
+            ("id",           port.portId,       IS_TERM_EQUAL_TO_FIELD),
+            ("portId",       port.portId,       IS_TERM_EQUAL_TO_FIELD),
+            ("poe",          port.poeEnabled,   IS_TERM_IN_FIELD),
+            ("poeEnabled",   port.poeEnabled,   IS_TERM_IN_FIELD),
+            ("rstp",         port.rstpEnabled,  IS_TERM_IN_FIELD),
+            ("rstpEnabled",  port.rstpEnabled,  IS_TERM_IN_FIELD),
+            ("stp",          port.stpGuard,     IS_TERM_IN_FIELD),
+            ("stpGuard",     port.stpGuard,     IS_TERM_IN_FIELD),
+            ("type",         port.type,         IS_TERM_IN_FIELD),
+            ("vlan",         port.vlan,         IS_TERM_EQUAL_TO_FIELD),
+            ("voice",        port.voiceVlan,    IS_TERM_EQUAL_TO_FIELD),
+            ("voiceVlan",    port.vlan,         IS_TERM_EQUAL_TO_FIELD),
+            ("name",         port.name,         IS_TERM_IN_FIELD),
+            ("switch",       port.switch_name,  IS_TERM_IN_FIELD),
+            ("enabled",      port.enabled,      IS_TERM_IN_FIELD),
+            ("tag",          port.tags,         IS_TAG_ON_DEVICE),
+            ("tags",         port.tags,         IS_TAG_ON_DEVICE),
         ]
 
         if should_show(terms, lookups):
