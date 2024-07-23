@@ -22,6 +22,11 @@ _default_48 = [
     24*[p.RJ45] + [p.Gap] + 4*[p.SFP] + [p.Gap] + 2*[p.STACK],
 ]
 
+_cisco_24_template = [
+    12*[p.RJ45] + [p.Gap] + 4*[p.SFP],
+    12*[p.RJ45] + [p.Gap] + 4*[p.SFP] + [p.Gap] + 2*[p.STACK],
+]
+
 switch_lookup = {
     "C9300-48UXM": [
         24*[p.RJ45] + [p.Gap] + 2*[p.STACK_Gap]                       + [p.Gap] + 4*[p.SFP_Gap]                       + [p.Gap] + [(i + 54, p.SFP) for i in range(0, 8, 2)] + [p.Gap] + 2*[p.SFP_Gap]                       + [p.Gap] + [(i + 64, p.SFP) for i in range(0, 34, 2)],
@@ -33,6 +38,8 @@ switch_lookup = {
         24*[p.RJ45],
         24*[p.RJ45] + [p.Gap] + 2*[p.STACK] + [p.Gap] + 4*[p.SFP],
     ],
+    "C9300-24P": _cisco_24_template,
+    "C9300-24U": _cisco_24_template,
     "default_8": _default_8,
     "default_24": _default_24,
     "default_48": _default_48,
@@ -52,6 +59,10 @@ switch_lookup = {
     ],
     "MS130-8P": [
         8*[p.RJ45] + 2*[p.SFP],
+    ],
+    "MS130-24P": [
+        12*[p.RJ45] + [p.Gap] + 2*[p.SFP],
+        12*[p.RJ45] + [p.Gap] + 2*[p.SFP],
     ],
     "MS130R-8P": [
         4*[p.RJ45] + [p.Gap] + [p.SFP],
