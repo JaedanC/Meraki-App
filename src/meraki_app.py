@@ -76,7 +76,7 @@ class MerakiApp:
         if not self.p_organization_networks.response_exists() \
             or not self.p_organization_switches.response_exists():
             return
-        
+
         self.switches.clear()
         network_set = set()
         for switch in self.p_organization_switches.response():
@@ -96,7 +96,7 @@ class MerakiApp:
                 input_flags = pygui.INPUT_TEXT_FLAGS_NONE
             else:
                 input_flags = pygui.INPUT_TEXT_FLAGS_PASSWORD
-                
+
             pygui.same_line()
             pygui.input_text("Meraki API key", self.meraki_api_key, input_flags)
             if pygui.is_item_deactivated_after_edit():
@@ -114,16 +114,16 @@ class MerakiApp:
         if self.p_organization_networks.is_response_new():
             self.switch_callback()
             self.p_organization_networks.mark_response_used()
-        
+
         if self.p_organization_switches.is_response_new():
             self.switch_callback()
             self.p_organization_switches.mark_response_used()
-        
+
         if pygui.input_text("Filter", self.switch_search) or self.switches_filtered is None:
             self.switches_filtered = switch_filter(self.switch_search.value, self.switches)
             self.switches_filtered_ports = sum([s.ports for s in self.switches_filtered], start=[])
             self.switches_filtered_ports_filtered = None
-        
+
         qt = tokenise_query_into_dict(self.switch_search.value)
         filtering_by_network = (qt.get("network") or qt.get("site")) is not None
         if len(self.switch_search.value) == 0 or filtering_by_network:
@@ -142,11 +142,11 @@ class MerakiApp:
                     switch.draw()
                     pygui.tree_pop()
 
-    
+
     def switchports_window(self):
         if self.switches_filtered_ports is None:
             return
-        
+
         if pygui.input_text("Filter Ports", self.switch_port_search) or self.switches_filtered_ports_filtered is None:
             self.switches_filtered_ports_filtered = switch_port_filter(self.switch_port_search.value, self.switches_filtered_ports)
 
@@ -162,7 +162,7 @@ class MerakiApp:
             pygui.TABLE_FLAGS_BORDERS_V | \
             pygui.TABLE_FLAGS_NO_BORDERS_IN_BODY | \
             pygui.TABLE_FLAGS_SCROLL_Y
-        
+
         if pygui.begin_table("switchport_sorting", 11, table_flags):
             pygui.table_setup_column("Preview",      pygui.TABLE_COLUMN_FLAGS_NO_SORT)
             pygui.table_setup_column("Switch",       pygui.TABLE_COLUMN_FLAGS_DEFAULT_SORT | pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
@@ -190,7 +190,7 @@ class MerakiApp:
                         compare_obj = Sortable(compare_obj)
 
                     sort_with.append(compare_obj)
-                
+
                 # Add some default sorting fields
                 if sort_spec.sort_direction == pygui.SORT_DIRECTION_DESCENDING:
                     sort_with += [SortableNegative(d) for d in port.get_default_sort()]
@@ -209,7 +209,7 @@ class MerakiApp:
 
             # This is our first example of not being able to share heap objects
             # across the dll. I need to get a pointer to a valid type that it
-            # creates, not me. This requires adding a custom constructor and 
+            # creates, not me. This requires adding a custom constructor and
             # destructor for the ImGuiListClipper class.
             clipper.begin(len(self.switches_filtered_ports_filtered))
             while clipper.step():
@@ -268,7 +268,7 @@ class MerakiApp:
     def appliance_callback(self):
         if not self.p_organization_appliances.response_exists():
             return
-        
+
         self.appliances.clear()
         for appliance in self.p_organization_appliances.response():
             self.appliances.append(MerakiDevice(appliance))
@@ -282,22 +282,23 @@ class MerakiApp:
 
         if not self.p_organization_appliances.response_exists():
             return
-        
+
         if self.p_organization_appliances.is_response_new():
             self.appliance_callback()
             self.p_organization_appliances.mark_response_used()
 
         if pygui.input_text("Filter", self.appliance_search) or self.appliances_filtered is None:
             self.appliances_filtered = appliance_filter(self.appliance_search.value, self.appliances)
-        
+
         for appliance in self.appliances_filtered:
             if pygui.collapsing_header((appliance.name or appliance.mac) + " " + appliance.model):
                 appliance.draw(self.mki_dashboard)
-        
+
 
     def draw(self):
         main_viewport = pygui.get_main_viewport()
-        ds = pygui.dock_space_over_viewport(main_viewport)
+        id_ = pygui.get_id("Main view")
+        ds = pygui.dock_space_over_viewport(id_, main_viewport)
 
         pygui.set_next_window_dock_id(ds, pygui.COND_FIRST_USE_EVER)
         if pygui.begin("Switches"):

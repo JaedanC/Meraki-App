@@ -44,10 +44,10 @@ def main(meraki_key: str):
 
     window = glfw.create_window(1600, 900, "Meraki App", None, None)
     if window is None:
-       print("Failed to create window! Terminating")
-       glfw.terminate()
-       return
-    
+        print("Failed to create window! Terminating")
+        glfw.terminate()
+        return
+
     glfw.make_context_current(window)
 
     # Vsync:
@@ -65,8 +65,8 @@ def main(meraki_key: str):
     io.config_flags |= pygui.CONFIG_FLAGS_DOCKING_ENABLE
     io.config_flags |= pygui.CONFIG_FLAGS_VIEWPORTS_ENABLE
 
-    pygui.impl_glfw_init_for_open_gl(window, True)
-    pygui.impl_open_gl3_init()
+    pygui.c_impl_glfw_init_for_open_gl(window, True)
+    pygui.c_impl_open_gl3_init()
 
     # Check opengl version
     print("Opengl version: {}".format(gl.glGetString(gl.GL_VERSION).decode()))
@@ -88,44 +88,44 @@ def main(meraki_key: str):
             print("AssertionError")
         else:
             print("pygui.ImGuiError")
-    
+
     demo_fonts_init()
 
     try:
         while not glfw.window_should_close(window):
             glfw.poll_events()
-            pygui.impl_open_gl3_new_frame()
-            pygui.impl_glfw_new_frame()
+            pygui.c_impl_open_gl3_new_frame()
+            pygui.c_impl_glfw_new_frame()
             pygui.new_frame()
 
             render(backup_app)
 
             pygui.render()
             glfw.make_context_current(window)
-            
+
             gl.glViewport(0, 0, int(io.display_size[0]), int(io.display_size[1]))
             gl.glClearColor(*clear_color)
             gl.glClear(gl.GL_COLOR_BUFFER_BIT)
 
             draw_data = pygui.get_draw_data()
-            pygui.impl_open_gl3_render_draw_data(draw_data)
+            pygui.c_impl_open_gl3_render_draw_data(draw_data)
 
             if io.config_flags & pygui.CONFIG_FLAGS_VIEWPORTS_ENABLE:
                 backup_current_window = glfw.get_current_context()
                 pygui.update_platform_windows()
                 pygui.render_platform_windows_default()
                 glfw.make_context_current(backup_current_window)
-            
+
             glfw.swap_buffers(window)
     except KeyboardInterrupt:
         print("Closing")
-    
-    pygui.impl_open_gl3_shutdown()
-    pygui.impl_glfw_shutdown()
+
+    pygui.c_impl_open_gl3_shutdown()
+    pygui.c_impl_glfw_shutdown()
     pygui.destroy_context()
     glfw.destroy_window(window)
     glfw.terminate()
 
 
 if __name__ == "__main__":
-    main()
+    main("")

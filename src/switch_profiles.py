@@ -32,7 +32,7 @@ switch_lookup = {
         24*[p.RJ45] + [p.Gap] + 2*[p.STACK_Gap]                       + [p.Gap] + 4*[p.SFP_Gap]                       + [p.Gap] + [(i + 54, p.SFP) for i in range(0, 8, 2)] + [p.Gap] + 2*[p.SFP_Gap]                       + [p.Gap] + [(i + 64, p.SFP) for i in range(0, 34, 2)],
         24*[p.RJ45] + [p.Gap] + [(i + 48, p.STACK) for i in range(2)] + [p.Gap] + [(i + 50, p.SFP) for i in range(4)] + [p.Gap] + [(i + 55, p.SFP) for i in range(0, 8, 2)] + [p.Gap] + [(i + 62, p.SFP) for i in range(2)] + [p.Gap] + [(i + 65, p.SFP) for i in range(0, 34, 2)],
     ],
-    "C9200L-24P-4X": _default_24, # Testing that this works
+    "C9200L-24P-4X": _default_24,
     "C9200L-48P-4X": _default_48,
     "C9300-48P": [
         24*[p.RJ45],
@@ -40,6 +40,12 @@ switch_lookup = {
     ],
     "C9300-24P": _cisco_24_template,
     "C9300-24U": _cisco_24_template,
+    "C9300-24S": [
+        8*[p.SFP],
+        8*[p.SFP] + [p.Gap] + 2*[p.SFP] + [p.Gap] + 2*[p.STACK],
+    ], # This isn't 100% correct. Doesn't include the module
+    "C9300L-24P-4X": _default_24,
+    "C9300L-48P-4X": _default_48,
     "default_8": _default_8,
     "default_24": _default_24,
     "default_48": _default_48,

@@ -27,7 +27,7 @@ def main():
     if args.meraki_key_file is not None:
         with open(args.meraki_key_file) as f:
             meraki_key = f.read()
-    
+
     pygui_app.main(meraki_key)
 
 
