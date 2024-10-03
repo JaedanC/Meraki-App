@@ -1,6 +1,5 @@
 glfw
 Pillow
-py2exe
 PyOpenGL
 pyperclip
 meraki
