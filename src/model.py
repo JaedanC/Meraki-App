@@ -51,7 +51,7 @@ class MerakiDevice:
     def lldp_callback(self):
         if not self.p_lldp.response_exists():
             return
-        
+
         response = self.p_lldp.response()
         if "ports" not in response:
             return
@@ -62,7 +62,7 @@ class MerakiDevice:
             for i, char in enumerate(port_name):
                 if char.isdigit():
                     break
-            
+
             port_iden = port_name[:i]
             port_iden = port_iden if len(port_iden) > 0 else "Port"
             port_id = int(port_name[i:]) if port_name[i:].isnumeric() else port_name[i:]
@@ -70,7 +70,7 @@ class MerakiDevice:
                 "port_iden": port_iden,
                 "port_id": port_id,
             }))
-        
+
         self.lldp.sort(key=lambda x: (x.get("port_iden"), Sortable(x.get("port_id"))))
 
     def draw(self, mki_dashboard):
@@ -78,11 +78,11 @@ class MerakiDevice:
 
         if not self.p_lldp.queried_at_least_once():
             self.p_lldp.begin_task(dashboard=mki_dashboard)
-        
+
         if self.p_lldp.is_response_new():
             self.lldp_callback()
             self.p_lldp.mark_response_used()
-        
+
         pygui.text(self.name)
         pygui.same_line()
         pygui.text_disabled("(?)")
@@ -108,11 +108,11 @@ class MerakiDevice:
         text_copy(self.serial, self.name + "serial")
         text_copy(self.mac, self.name + "mac")
         pygui.end_group()
-        
+
         pygui.same_line()
         pygui.text_wrapped(self.notes)
         pygui.separator()
-        
+
         if "wan1Ip" in self._raw:
             pygui.text("WAN 1 ")
             pygui.same_line()
@@ -122,7 +122,7 @@ class MerakiDevice:
                 pygui.text(self.wan1_ip)
             else:
                 pygui.text_colored((0.8, 0, 0, 1), "[inactive]")
-        
+
         if "wan2Ip" in self._raw:
             pygui.text("WAN 2 ")
             pygui.same_line()
@@ -132,7 +132,7 @@ class MerakiDevice:
                 pygui.text(self.wan2_ip)
             else:
                 pygui.text_colored((1, 0, 0, 1), "[inactive]")
-        
+
         if "lanIp" in self._raw:
             pygui.text("LAN IP")
             pygui.same_line()
@@ -142,7 +142,7 @@ class MerakiDevice:
                 pygui.text(self.lan_ip)
             else:
                 pygui.text_colored((0.8, 0, 0, 1), "[inactive]")
-        
+
         pygui.separator()
 
         if not self.p_lldp.response_exists():
@@ -178,13 +178,14 @@ class MerakiDevice:
 
             # Device Recognition Bar
             device_name = port.get("lldp", "systemName") or port.get("cdp", "deviceId") or "None"
+            device_url = port.get("device", "url") or ""
             port_id = port.get("port_id")
             connected_port: str = port.get("lldp", "portId") or port.get("cdp", "portId") or "None"
             device_id = port.get("cdp", "deviceId") or "None"
             device_ip = port.get("cdp", "address") or port.get("lldp", "managementAddress")
 
             device_bar = None
-            if "Meraki" in device_name:
+            if "Meraki" in device_name or len(device_url) > 0:
                 device_bar = (0, 0.8, 0, 1)
             elif connected_port.count("/") == 2:
                 device_bar = (1, 0.7, 0.1, 1)
@@ -192,7 +193,7 @@ class MerakiDevice:
                 device_bar = (0.8, 0.8, 0.8, 1)
             else:
                 device_bar = (0.3, 0.3, 0.3, 1)
-            
+
             cx, cy = pygui.get_cursor_screen_pos()
             draw_list.add_rect_filled(
                 (cx, cy),
@@ -201,7 +202,7 @@ class MerakiDevice:
             )
             pygui.dummy((5, HEIGHT))
             pygui.same_line()
-            
+
             pygui.begin_group()
             pygui.text("({} {}) -> {} ({})".format(
                 port.get("port_iden"),
@@ -228,7 +229,7 @@ class MerakiDevice:
             text_copy(f"device: {device_name}", device_name_unique, text_to_copy=device_name)
 
             pygui.end_group()
-        
+
     def __repr__(self):
         return json.dumps(self._raw, indent=4)
 
@@ -254,7 +255,7 @@ class Switch:
             self.accessPolicyType = port.get("accessPolicyType")
             self.stickyMacAllowList = port.get("stickyMacAllowList", [])
             self.stickyMacAllowListLimit = port.get("stickyMacAllowListLimit")
-        
+
         def get_json(self) -> dict:
             return self._raw
 
@@ -271,7 +272,7 @@ class Switch:
                 port_id = int(self.portId)
             except ValueError:
                 port_id = self.portId
-            
+
             field = [
                 None,
                 self.switch_name,
@@ -286,11 +287,11 @@ class Switch:
                 self.rstpEnabled,
             ][idx]
             return field
-        
+
         def draw(self, sz_x, sz_y, top_row=True, sfp=False, stack=False):
             """This function is responsible for drawing a singular port. The room
             you have to draw is denoted by sz_x and sz_y.
-            
+
             - `sfp` will be True if this port is an additional SFP port
             - `stack` will be True if this port is a stacking port
             - Otherwise treat this as a regular port. TODO: This currently does
@@ -335,7 +336,7 @@ class Switch:
                 0,
                 2
             )
-            
+
             # Inner circle: Type
             middle_x = cx + sz_x / 2
             middle_y = cy + sz_y / 2
@@ -346,7 +347,7 @@ class Switch:
                     min(sz_x, sz_y) / 3,
                     pygui.color_convert_float4_to_u32((0, 0, 0, 1)),
                 )
-            
+
             if self.voiceVlan is not None and self.type == "access":
                 idx = int(pygui.get_time()) % 2
                 text = [self.vlan, self.voiceVlan][idx]
@@ -366,7 +367,7 @@ class Switch:
 
             pygui.invisible_button(str(hash(self)), (sz_x, sz_y))
             show_tooltip()
-        
+
         def __repr__(self):
             return json.dumps(self._raw, indent=4)
 
@@ -388,7 +389,7 @@ class Switch:
             iterator = itertools.zip_longest([], self.switchport_profile[0])
         else:
             iterator = itertools.zip_longest(self.switchport_profile[0], self.switchport_profile[1])
-        
+
         self.top_line = []
         self.bot_line = []
         running_port_idx = 0
@@ -415,7 +416,7 @@ class Switch:
                 else:
                     self.bot_line.append((running_port_idx, bot))
                     running_port_idx += 1
-    
+
     def draw(self):
         """Draw the switch and its ports."""
         PORT_HEIGHT = 40
@@ -429,21 +430,21 @@ class Switch:
             port_text_len = pygui.calc_text_size(port_text)[0]
             pygui.set_cursor_pos_x(
                 pygui.get_cursor_pos_x() + width / 2 - port_text_len / 2)
-            
+
             d = pygui.get_window_draw_list()
             d.add_text(
                 pygui.get_cursor_screen_pos(),
-                pygui.color_convert_float4_to_u32((0.4, 0.4, 0.4, 1)), 
+                pygui.color_convert_float4_to_u32((0.4, 0.4, 0.4, 1)),
                 port_text
             )
             pygui.dummy((1, pygui.get_text_line_height_with_spacing()))
             # pygui.text(port_text)
-        
+
         for i, port_type in enumerate(self.top_line + self.bot_line):
             is_first_line = i < len(self.top_line)
             if i > 0 and i != len(self.top_line):
                 pygui.same_line()
-            
+
             if isinstance(port_type, tuple):
                 assert port_type[0] < len(self.ports), \
                     "Error: Remember, port_id must be an index. len(ports): {}, index: {}".format(
@@ -453,7 +454,7 @@ class Switch:
                 port_type = port_type[1]
             else:
                 port = None
-            
+
             if port_type == switch_profiles.p.Gap:
                 pygui.dummy((GAP_WIDTH, 0))
                 continue
@@ -469,9 +470,9 @@ class Switch:
             if port_type == switch_profiles.p.STACK_Gap:
                 pygui.dummy((STACK_WIDTH, PORT_HEIGHT))
                 continue
-            
+
             # Draw the port
-            assert port != None
+            assert port is not None
             port: Switch.SwitchPort
 
             sfp = False
@@ -484,7 +485,7 @@ class Switch:
             else:
                 size = STACK_WIDTH
                 stack = True
-            
+
             pygui.begin_group()
             if is_first_line:
                 _show_port_text(port.portId, size)
@@ -494,11 +495,11 @@ class Switch:
                 pygui.set_drag_drop_payload("Port", port)
                 port.draw(size, PORT_HEIGHT, is_first_line, sfp, stack)
                 pygui.end_drag_drop_source()
-            
+
             if not is_first_line:
                 _show_port_text(port.portId, size)
-        
-            
+
+
             pygui.end_group()
 
 
@@ -512,7 +513,7 @@ class PortProfile:
             random.random(),
             1
         )
-    
+
     def includes(self, other_port: Switch.SwitchPort):
         my_json = self.port.get_json()
         other_json = other_port.get_json()
@@ -523,7 +524,7 @@ class PortProfile:
             if my_json.get(field) != other_json.get(field):
                 return False
         return True
-    
+
     def draw(self):
         pygui.begin_group()
         self.port.draw(50, 50)
