@@ -1,9 +1,11 @@
 from __future__ import annotations
 from typing import List, Optional
+import os
+import time
 
 import extra.meraki_util
 import pygui
-from extra.api import RelaxedDictionary
+from extra.api import RelaxedDictionary, dict_to_csv, safe_open_w
 
 from .cache import Cache
 from .future import Future
@@ -86,6 +88,7 @@ class MerakiApp:
             network_set.add(switch.get("network", "id"))
 
         self.networks = [RelaxedDictionary(n) for n in self.p_organization_networks.response() if n["id"] in network_set]
+        self.networks.sort(key=lambda x: x.get("name"))
         self.switches_filtered = None
 
 
@@ -151,6 +154,20 @@ class MerakiApp:
             self.switches_filtered_ports_filtered = switch_port_filter(self.switch_port_search.value, self.switches_filtered_ports)
 
         pygui.text("Showing {} ports".format(len(self.switches_filtered_ports_filtered)))
+        pygui.same_line()
+        if pygui.button("Open folder"):
+            # Windows only
+            os.startfile(os.path.abspath("cache"))
+        pygui.same_line()
+        if pygui.button("csv"):
+            try:
+                with safe_open_w("cache/getOrganizationSwitchPortsBySwitch.csv") as f:
+                    f.write(dict_to_csv([{"switch": s.switch_name} | s.get_json()  for s in self.switches_filtered_ports_filtered]))
+                    print("Saved to cache/getOrganizationSwitchPortsBySwitch.csv")
+            except IOError as e:
+                print(e)
+
+
 
         table_flags = pygui.TABLE_FLAGS_RESIZABLE | \
             pygui.TABLE_FLAGS_REORDERABLE | \

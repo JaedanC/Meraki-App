@@ -37,11 +37,11 @@ class Future:
             pygui.button(label + " " + "/-\|"[(pygui.get_frame_count() // 60) % 4] + "###" + unique_id)
         elif pygui.button(label + "###" + unique_id):
             self.begin_task(**kwargs)
-        
+
         pygui.same_line()
         if self._time is not None:
             time_struct = datetime.datetime.fromtimestamp(self._time)
-            pygui.text("Last refreshed: {}".format(time_struct.strftime("%m/%d/%Y, %H:%M:%S")))
+            pygui.text("Last refreshed: {}".format(time_struct.strftime("%d/%m/%Y, %H:%M:%S")))
         else:
             pygui.text("Last refreshed: Never")
 
@@ -59,7 +59,7 @@ class Future:
 
     def response(self):
         return self._response
-    
+
     def get_error_status(self):
         return self._error_status
 
@@ -86,7 +86,7 @@ class Future:
         finally:
             self._refreshing = False
             self._response_dirty = True
-    
+
     def begin_task(self, *args, **kwargs):
         if self._refreshing:
             return
