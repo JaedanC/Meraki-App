@@ -1,6 +1,7 @@
 import itertools
 import json
 import random
+import time
 from typing import List
 
 import pygui
@@ -12,10 +13,49 @@ from .cache import Cache
 from .future import Future
 from .pygui_ext import Sortable, text_copy
 
+import requests
+
+
+def createDeviceLiveToolsSpeedTest(api_key: str, device_serial: str, uplink: str):
+    print(f"Testing the speed of {device_serial}")
+    # https://developer.cisco.com/meraki/api-v1/create-device-live-tools-speed-test/
+    url = f"https://api.meraki.com/api/v1/devices/{device_serial}/liveTools/speedTest"
+
+    payload = {
+        "interface": f"{uplink}"
+    }
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+
+    res = requests.request("POST", url, headers=headers, data=json.dumps(payload), timeout=10)
+    return res.json()
+
+
+def getDeviceLiveToolsSpeedTest(api_key: str, device_serial: str, speed_test_id: str):
+    print(f"Checking if {device_serial} has completed the speedtest: {speed_test_id}")
+    # https://developer.cisco.com/meraki/api-v1/get-device-live-tools-speed-test/
+    url = f"https://api.meraki.com/api/v1/devices/{device_serial}/liveTools/speedTest/{speed_test_id}"
+
+    payload = None
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json"
+    }
+
+    response = requests.request("GET", url, headers=headers, data = payload, timeout=10)
+    return response.json()
+
+
 
 class MerakiDevice:
-    def __init__(self, device: dict):
+    def __init__(self, device: dict, meraki_api_key: pygui.String):
         self._raw = device
+        self.meraki_api_key = meraki_api_key
         device = RelaxedDictionary(device)
         self.name = device.get("name")
         self.serial = device.get("serial")
@@ -48,6 +88,53 @@ class MerakiDevice:
         )
         self.lldp_callback()
 
+        self.wan1_speedtest = None
+        self.wan2_speedtest = None
+        if self.product_type == "appliance" and self.serial is not None:
+            speedtest_cache = Cache("pygui_cache/appliance {} {} speedtest.json".format(self.name or self.mac.replace(":", ""), self.serial))
+            self.wan1_speedtest = Future(
+                createDeviceLiveToolsSpeedTest,
+                [],
+                {
+                    "device_serial": self.serial,
+                    "uplink": "wan1",
+                },
+                speedtest_cache,
+                "wan1",
+            )
+            self.wan2_speedtest = Future(
+                createDeviceLiveToolsSpeedTest,
+                [],
+                {
+                    "device_serial": self.serial,
+                    "uplink": "wan2",
+                },
+                speedtest_cache,
+                "wan2",
+            )
+            self.wan1_speedtest_result = Future(
+                getDeviceLiveToolsSpeedTest,
+                [],
+                {
+                    "device_serial": self.serial,
+                },
+                speedtest_cache,
+                "wan1_result",
+            )
+            self.wan2_speedtest_result = Future(
+                getDeviceLiveToolsSpeedTest,
+                [],
+                {
+                    "device_serial": self.serial,
+                },
+                speedtest_cache,
+                "wan2_result",
+            )
+            self.speedtest_wait_timer = 3 # Seconds
+            self.wan1_query_after_time_is = 0
+            self.wan2_query_after_time_is = 0
+
+
     def lldp_callback(self):
         if not self.p_lldp.response_exists():
             return
@@ -72,6 +159,35 @@ class MerakiDevice:
             }))
 
         self.lldp.sort(key=lambda x: (x.get("port_iden"), Sortable(x.get("port_id"))))
+
+    def pygui_enqueue_speed_test(self):
+        self.wan1_speedtest.draw_refresh_button("Speedtest WAN 1", (self.name or self.mac) + " wan1", api_key=self.meraki_api_key.value)
+        self.wan2_speedtest.draw_refresh_button("Speedtest WAN 2", (self.name or self.mac) + " wan2", api_key=self.meraki_api_key.value)
+
+        if self.wan1_speedtest.is_response_new():
+            self.wan1_speedtest_result.begin_task(api_key=self.meraki_api_key.value, speed_test_id=self.wan1_speedtest.response()["speedTestId"])
+            self.wan1_query_after_time_is = time.time() + self.speedtest_wait_timer
+            self.wan1_speedtest.mark_response_used()
+        
+        if self.wan2_speedtest.is_response_new():
+            self.wan2_speedtest_result.begin_task(api_key=self.meraki_api_key.value, speed_test_id=self.wan2_speedtest.response()["speedTestId"])
+            self.wan2_query_after_time_is = time.time() + self.speedtest_wait_timer
+            self.wan2_speedtest.mark_response_used()
+
+        if self.wan1_speedtest_result is not None \
+            and self.wan1_speedtest_result.response_exists() \
+            and self.wan1_speedtest_result.response()["status"] != "complete" \
+            and self.wan1_speedtest_result.response()["status"] != "failed" \
+            and time.time() > self.wan1_query_after_time_is:
+            self.wan1_speedtest_result.begin_task(api_key=self.meraki_api_key.value, speed_test_id=self.wan1_speedtest.response()["speedTestId"])
+        
+        if self.wan2_speedtest_result is not None \
+            and self.wan2_speedtest_result.response_exists() \
+            and self.wan2_speedtest_result.response()["status"] != "complete" \
+            and self.wan2_speedtest_result.response()["status"] != "failed" \
+            and time.time() > self.wan2_query_after_time_is:
+            self.wan2_speedtest_result.begin_task(api_key=self.meraki_api_key.value, speed_test_id=self.wan2_speedtest.response()["speedTestId"])
+
 
     def draw(self, mki_dashboard):
         self.p_lldp.draw_refresh_button(f"Get Device CP & LLDP", self.name or self.mac, dashboard=mki_dashboard)
@@ -113,6 +229,8 @@ class MerakiDevice:
         pygui.text_wrapped(self.notes)
         pygui.separator()
 
+        longest_ip = max(len(self.wan1_ip or ""), len(self.wan2_ip or ""))
+
         if "wan1Ip" in self._raw:
             pygui.text("WAN 1 ")
             pygui.same_line()
@@ -122,6 +240,15 @@ class MerakiDevice:
                 pygui.text(self.wan1_ip)
             else:
                 pygui.text_colored((0.8, 0, 0, 1), "[inactive]")
+            if self.wan1_speedtest_result.response_exists() and self.wan1_speedtest_result.response()["status"] == "complete":
+                pygui.same_line()
+                pygui.text_colored((0, 1, 0, 1), "{}{} Mbps".format(" " * (longest_ip - len(self.wan1_ip or "")), self.wan1_speedtest_result.response()["results"]["speeds"]["average"]))
+            elif self.wan1_speedtest_result.response_exists() and self.wan1_speedtest_result.response()["status"] == "running":
+                pygui.same_line()
+                pygui.text_colored((0, 1, 0, 1), "{}Running".format(" " * (longest_ip - len(self.wan1_ip or ""))))
+            elif self.wan1_speedtest_result.response_exists() and self.wan1_speedtest_result.response()["status"] == "failed":
+                pygui.same_line()
+                pygui.text_colored((1, 0, 0, 1), "{}Speedtest Failed".format(" " * (longest_ip - len(self.wan1_ip or ""))))
 
         if "wan2Ip" in self._raw:
             pygui.text("WAN 2 ")
@@ -132,6 +259,18 @@ class MerakiDevice:
                 pygui.text(self.wan2_ip)
             else:
                 pygui.text_colored((1, 0, 0, 1), "[inactive]")
+            if self.wan2_speedtest_result.response_exists() and self.wan2_speedtest_result.response()["status"] == "complete":
+                pygui.same_line()
+                pygui.text_colored((0, 1, 0, 1), "{}{} Mbps".format(" " * (longest_ip - len(self.wan2_ip or "")), self.wan2_speedtest_result.response()["results"]["speeds"]["average"]))
+            elif self.wan2_speedtest_result.response_exists() and self.wan2_speedtest_result.response()["status"] == "running":
+                pygui.same_line()
+                pygui.text_colored((0, 1, 0, 1), "{}Running".format(" " * (longest_ip - len(self.wan2_ip or ""))))
+            elif self.wan2_speedtest_result.response_exists() and self.wan2_speedtest_result.response()["status"] == "failed":
+                pygui.same_line()
+                pygui.text_colored((1, 0, 0, 1), "{}Speedtest Failed".format(" " * (longest_ip - len(self.wan2_ip or ""))))
+        
+        if self.product_type == "appliance":
+            self.pygui_enqueue_speed_test()
 
         if "lanIp" in self._raw:
             pygui.text("LAN IP")

@@ -288,7 +288,7 @@ class MerakiApp:
 
         self.appliances.clear()
         for appliance in self.p_organization_appliances.response():
-            self.appliances.append(MerakiDevice(appliance))
+            self.appliances.append(MerakiDevice(appliance, self.meraki_api_key))
         self.appliances.sort(key=lambda x: (x.name, x.mac))
 
         self.appliances_filtered = None
