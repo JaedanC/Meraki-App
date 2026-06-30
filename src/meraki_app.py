@@ -1,10 +1,9 @@
 from __future__ import annotations
 from typing import List, Optional
 import os
-import time
 
 import extra.meraki_util
-import pygui
+import pygui_cython as pygui
 from extra.api import RelaxedDictionary, dict_to_csv, safe_open_w
 
 from .cache import Cache

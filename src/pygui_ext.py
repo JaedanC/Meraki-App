@@ -1,4 +1,4 @@
-import pygui
+import pygui_cython as pygui
 import pyperclip
 
 

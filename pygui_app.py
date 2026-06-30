@@ -1,7 +1,7 @@
-import pygui
+import pygui_cython as pygui
 import glfw
 import OpenGL.GL as gl
-from pygui_demo import demo_fonts_init, pygui_demo_window
+from pygui_cython.pygui_demo import demo_fonts_init, pygui_demo_window
 
 from src.cache import Cache
 from src.meraki_app import MerakiApp

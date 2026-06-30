@@ -4,7 +4,7 @@ import random
 import time
 from typing import List
 
-import pygui
+import pygui_cython as pygui
 import extra.meraki_util
 from extra.api import RelaxedDictionary
 

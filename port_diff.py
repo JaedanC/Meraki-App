@@ -1,4 +1,3 @@
-import json
 import csv
 
 from extra.api import dict_diff, dict_to_csv, safe_open_w

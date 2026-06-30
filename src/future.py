@@ -4,7 +4,7 @@ import traceback
 from threading import Thread, Lock
 from typing import List, Dict, Any, Callable
 
-import pygui
+import pygui_cython as pygui
 from .cache import Cache
 
 
@@ -34,7 +34,7 @@ class Future:
     def draw_refresh_button(self, label: str, unique_id: str=None, **kwargs):
         unique_id = unique_id or label
         if self._refreshing:
-            pygui.button(label + " " + "/-\|"[(pygui.get_frame_count() // 60) % 4] + "###" + unique_id)
+            pygui.button(label + " " + r"/-\|"[(pygui.get_frame_count() // 60) % 4] + "###" + unique_id)
         elif pygui.button(label + "###" + unique_id):
             self.begin_task(**kwargs)
 

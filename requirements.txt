@@ -1,5 +1,6 @@
 glfw
 Pillow
+pygui-cython
 PyOpenGL
 pyperclip
 meraki
