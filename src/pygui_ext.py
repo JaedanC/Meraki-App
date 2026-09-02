@@ -2,34 +2,7 @@ import pygui_cython as pygui
 import pyperclip
 
 
-class Sortable:
-    def __init__(self, obj):
-        self.obj = obj
-
-    def __eq__(self, other):
-        return str(other.obj) == str(self.obj)
-
-    def __lt__(self, other):
-        if type(self.obj) != type(other.obj):
-            return str(other.obj) > str(self.obj)
-        return other.obj > self.obj
-
-# From: https://stackoverflow.com/a/75123782
-class SortableNegative:
-    def __init__(self, obj):
-        self.obj = obj
-
-    def __eq__(self, other):
-        return str(other.obj) == str(self.obj)
-
-    def __lt__(self, other):
-        if type(self.obj) != type(other.obj):
-            return str(other.obj) < str(self.obj)
-        return other.obj < self.obj
-
-
 _remember_dict = {}
-
 
 def text_copy(
         text: str,

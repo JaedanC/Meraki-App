@@ -28,10 +28,10 @@ def render(meraki_app: MerakiApp):
         pygui_demo_window()
 
 
-def main(meraki_key: str):
+def main(meraki_api_key: str):
     organisation_id = "34581"
     cache = Cache("pygui_cache/query_cache.json")
-    backup_app = MerakiApp(meraki_key, organisation_id, cache)
+    meraki_app = MerakiApp(meraki_api_key, organisation_id, cache)
 
     if not glfw.init():
         return
@@ -98,7 +98,7 @@ def main(meraki_key: str):
             pygui.c_impl_glfw_new_frame()
             pygui.new_frame()
 
-            render(backup_app)
+            render(meraki_app)
 
             pygui.render()
             glfw.make_context_current(window)

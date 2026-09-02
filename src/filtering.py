@@ -1,6 +1,7 @@
 from typing import List, Tuple, Dict, Any, Callable
 
 from .model import Switch, MerakiDevice
+from .tables.table import tokenise_query_into_dict, IS_TAG_ON_DEVICE, IS_TERM_EQUAL_TO_FIELD, IS_TERM_IN_FIELD, IS_VLAN_ALLOWED
 
 
 SWITCH_FILTER_HELP_TEXT = """
@@ -79,65 +80,6 @@ Valid switch port filters:
 
 E.g. AS01 wan1:200 serial:Q2
 """.strip()
-
-
-def IS_TERM_IN_FIELD(query: str, data_value: str) -> bool:
-    query = query.replace("_", " ")
-    return query in data_value
-
-
-def IS_TERM_EQUAL_TO_FIELD(query: str, data_value: str) -> bool:
-    return query == data_value
-
-
-def IS_VLAN_ALLOWED(query: str, data_value: str) -> bool:
-    if query.startswith("a") and data_value == "all":
-        return True
-    
-    vlans = data_value.split(",")
-    return query in vlans
-
-
-def IS_TAG_ON_DEVICE(query: str, data_value_tags: List[str]) -> bool:
-    for tag in data_value_tags:
-        if query in tag:
-            return True
-    return False
-
-
-def tokenise_query_into_dict(
-        query: str,
-        default="name"
-    ) -> Dict[str, Tuple[List[str], bool]]:
-    """Returns a dictionary containing the query terms. Eg.
-
-    Waratah poe:true vlan:999|200 voice:100 allowed!990|all
-
-    {
-        "name":  (["Waratah"],    True),
-        "poe":   (["true"],       True),
-        "vlan":  (["999", "200"], True),
-        "voice": (["100"],        True),
-        "stp":   (["990", "all"], False),
-    }
-
-    : Is a normal match
-    ! is a negated result
-    """
-    query = query.lower()
-    terms = {}
-    for t in query.split(" "):
-        if ":" not in t and "!" not in t:
-            terms[default] = (t.split("|"), True)
-            continue
-
-        if ":" in t:
-            t = t.split(":", 1)
-            terms[t[0]] = (t[1].split("|"), True)
-        elif "!" in t:
-            t = t.split("!", 1)
-            terms[t[0]] = (t[1].split("|"), False)
-    return terms
 
 
 def should_show(

@@ -1,16 +1,15 @@
 from __future__ import annotations
 from typing import List, Optional
-import os
 
 import extra.meraki_util
 import pygui_cython as pygui
-from extra.api import RelaxedDictionary, dict_to_csv, safe_open_w
+from extra.api import RelaxedDictionary
 
 from .cache import Cache
 from .future import Future
-from .pygui_ext import Sortable, SortableNegative
 from .model import Switch, MerakiDevice, PortProfile
-from .filtering import switch_filter, switch_port_filter, appliance_filter, tokenise_query_into_dict
+from .filtering import switch_filter, appliance_filter, tokenise_query_into_dict
+from .tables.switchports_table import SwitchportsTable
 
 
 class MerakiApp:
@@ -48,6 +47,8 @@ class MerakiApp:
         self.switch_search = pygui.String("")
         self.switch_port_search = pygui.String("")
         self.switches_filtered: List[Switch] = None
+        self.switchport_table = SwitchportsTable("Switchports", [])
+        self.reapply_switch_port_filter = True
         self.switches_filtered_ports: List[Switch.SwitchPort] = None
         self.switches_filtered_ports_filtered: List[Switch.SwitchPort] = None
         self.switch_callback()
@@ -89,6 +90,7 @@ class MerakiApp:
         self.networks = [RelaxedDictionary(n) for n in self.p_organization_networks.response() if n["id"] in network_set]
         self.networks.sort(key=lambda x: x.get("name"))
         self.switches_filtered = None
+        self.reapply_switch_port_filter = True
 
 
     def switch_window(self):
@@ -125,6 +127,8 @@ class MerakiApp:
             self.switches_filtered = switch_filter(self.switch_search.value, self.switches)
             self.switches_filtered_ports = sum([s.ports for s in self.switches_filtered], start=[])
             self.switches_filtered_ports_filtered = None
+            self.switchport_table = SwitchportsTable("Switchport Table", self.switches_filtered_ports)
+            self.switchport_table.reapply_filter(self.switch_port_search.value)
 
         qt = tokenise_query_into_dict(self.switch_search.value)
         filtering_by_network = (qt.get("network") or qt.get("site")) is not None
@@ -146,120 +150,12 @@ class MerakiApp:
 
 
     def switchports_window(self):
-        if self.switches_filtered_ports is None:
-            return
+        if pygui.input_text("Filter Ports", self.switch_port_search) or self.reapply_switch_port_filter:
+            self.switchport_table.reapply_filter(self.switch_port_search.value)
+            self.reapply_switch_port_filter = False
 
-        if pygui.input_text("Filter Ports", self.switch_port_search) or self.switches_filtered_ports_filtered is None:
-            self.switches_filtered_ports_filtered = switch_port_filter(self.switch_port_search.value, self.switches_filtered_ports)
-
-        pygui.text("Showing {} ports".format(len(self.switches_filtered_ports_filtered)))
-        pygui.same_line()
-        if pygui.button("Open folder"):
-            # Windows only
-            os.startfile(os.path.abspath("cache"))
-        pygui.same_line()
-        if pygui.button("csv"):
-            try:
-                with safe_open_w("cache/getOrganizationSwitchPortsBySwitch.csv") as f:
-                    f.write(dict_to_csv([{"switch": s.switch_name} | s.get_json()  for s in self.switches_filtered_ports_filtered]))
-                    print("Saved to cache/getOrganizationSwitchPortsBySwitch.csv")
-            except IOError as e:
-                print(e)
-
-
-
-        table_flags = pygui.TABLE_FLAGS_RESIZABLE | \
-            pygui.TABLE_FLAGS_REORDERABLE | \
-            pygui.TABLE_FLAGS_HIDEABLE | \
-            pygui.TABLE_FLAGS_SORTABLE | \
-            pygui.TABLE_FLAGS_SORT_MULTI | \
-            pygui.TABLE_FLAGS_ROW_BG | \
-            pygui.TABLE_FLAGS_BORDERS_OUTER | \
-            pygui.TABLE_FLAGS_BORDERS_V | \
-            pygui.TABLE_FLAGS_NO_BORDERS_IN_BODY | \
-            pygui.TABLE_FLAGS_SCROLL_Y
-
-        if pygui.begin_table("switchport_sorting", 11, table_flags):
-            pygui.table_setup_column("Preview",      pygui.TABLE_COLUMN_FLAGS_NO_SORT)
-            pygui.table_setup_column("Switch",       pygui.TABLE_COLUMN_FLAGS_DEFAULT_SORT | pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
-            pygui.table_setup_column("Port Id",      pygui.TABLE_COLUMN_FLAGS_DEFAULT_SORT | pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
-            pygui.table_setup_column("Name",         pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
-            pygui.table_setup_column("Type",         pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
-            pygui.table_setup_column("VLAN",         pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
-            pygui.table_setup_column("Voice VLAN",   pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
-            pygui.table_setup_column("Allowed VLAN", pygui.TABLE_COLUMN_FLAGS_WIDTH_FIXED)
-            pygui.table_setup_column("POE",          pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
-            pygui.table_setup_column("STP Guard",    pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
-            pygui.table_setup_column("RSTP Enabled", pygui.TABLE_COLUMN_FLAGS_WIDTH_STRETCH)
-            pygui.table_setup_scroll_freeze(0, 1) # Make row always visible
-            pygui.table_headers_row()
-
-            def custom_key(port: Switch.SwitchPort):
-                sort_specs = pygui.table_get_sort_specs()
-                sort_with = []
-                for sort_spec in sort_specs.specs:
-                    compare_obj = port.get_column_field(sort_spec.column_index)
-
-                    if sort_spec.sort_direction == pygui.SORT_DIRECTION_DESCENDING:
-                        compare_obj = SortableNegative(compare_obj)
-                    else:
-                        compare_obj = Sortable(compare_obj)
-
-                    sort_with.append(compare_obj)
-
-                # Add some default sorting fields
-                if sort_spec.sort_direction == pygui.SORT_DIRECTION_DESCENDING:
-                    sort_with += [SortableNegative(d) for d in port.get_default_sort()]
-                else:
-                    sort_with += [Sortable(d) for d in port.get_default_sort()]
-                return tuple(sort_with)
-
-            # Sort our data if sort specs have been changed!
-            if (sort_specs := pygui.table_get_sort_specs()):
-                if sort_specs.specs_dirty:
-                    self.switches_filtered_ports_filtered.sort(key=custom_key)
-                sort_specs.specs_dirty = False
-
-            # Demonstrate using clipper for large vertical lists
-            clipper = pygui.ImGuiListClipper.create()
-
-            # This is our first example of not being able to share heap objects
-            # across the dll. I need to get a pointer to a valid type that it
-            # creates, not me. This requires adding a custom constructor and
-            # destructor for the ImGuiListClipper class.
-            clipper.begin(len(self.switches_filtered_ports_filtered))
-            while clipper.step():
-                for row_n in range(clipper.display_start, clipper.display_end):
-                    # Display a data item
-                    port: Switch.SwitchPort = self.switches_filtered_ports_filtered[row_n]
-                    pygui.push_id((port.switch_name, port.portId))
-                    pygui.table_next_row()
-                    pygui.table_next_column()
-                    port.draw(30, 20, False)
-                    pygui.table_next_column()
-                    pygui.text_unformatted(port.switch_name)
-                    pygui.table_next_column()
-                    pygui.text(str(port.portId))
-                    pygui.table_next_column()
-                    pygui.text(port.name or "")
-                    pygui.table_next_column()
-                    pygui.text(port.type)
-                    pygui.table_next_column()
-                    pygui.text(str(port.vlan))
-                    pygui.table_next_column()
-                    pygui.text(str(port.voiceVlan))
-                    pygui.table_next_column()
-                    pygui.text(str(port.allowedVlans))
-                    pygui.table_next_column()
-                    pygui.text(str(port.poeEnabled))
-                    pygui.table_next_column()
-                    pygui.text(str(port.stpGuard))
-                    pygui.table_next_column()
-                    pygui.text(str(port.rstpEnabled))
-                    pygui.pop_id()
-            clipper.destroy()
-
-            pygui.end_table()
+        pygui.text("Showing {} ports".format(self.switchport_table.len_filtered()))
+        self.switchport_table.draw()
 
 
     def port_profile_draw(self):
